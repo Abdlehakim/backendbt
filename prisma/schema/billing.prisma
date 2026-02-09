@@ -1,0 +1,15 @@
+model Subscription {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  user             User     @relation(fields: [userId], references: [id])
+
+  status           String   @default("inactive")
+  plan             String?
+  currentPeriodEnd DateTime?
+
+  providerCustomerId String?
+  providerSubId      String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
