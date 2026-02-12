@@ -13,39 +13,53 @@ async function upsertUserWithSubscription(email, plainPassword) {
 
   return prisma.user.upsert({
     where: { email: normalizedEmail },
-    update: {
-      passwordHash,
-    },
+    update: { passwordHash },
     create: {
       email: normalizedEmail,
       passwordHash,
-      subscription: {
-        create: {
-          status: "INACTIVE",
-        },
-      },
+      subscription: { create: { status: "INACTIVE" } },
     },
-    // ✅ on récupère aussi subscription.id pour pouvoir lier modules/subModules
     select: { id: true, email: true, subscription: { select: { id: true } } },
   });
 }
 
 async function ensureCalculateurAndFerraillage() {
-  // MODULE_1 => "Calculateur"
   const calculateur = await prisma.module.upsert({
     where: { key: "MODULE_1" },
-    update: { name: "Calculateur", isActive: true },
-    create: { key: "MODULE_1", name: "Calculateur", isActive: true },
+    update: {
+      name: "Calculateur",
+      slug: "calculateur",
+      route: "/app/calculateur",
+      sortOrder: 10,
+      isActive: true,
+    },
+    create: {
+      key: "MODULE_1",
+      name: "Calculateur",
+      slug: "calculateur",
+      route: "/app/calculateur",
+      sortOrder: 10,
+      isActive: true,
+    },
     select: { id: true, name: true },
   });
 
-  // SubModule => "Ferraillage" lié au module Calculateur
   const ferraillage = await prisma.subModule.upsert({
     where: { key: "FERRAILLAGE" },
-    update: { name: "Ferraillage", isActive: true, moduleId: calculateur.id },
+    update: {
+      name: "Ferraillage",
+      slug: "ferraillage",
+      route: "/app/calculateur/ferraillage",
+      sortOrder: 10,
+      isActive: true,
+      moduleId: calculateur.id,
+    },
     create: {
       key: "FERRAILLAGE",
       name: "Ferraillage",
+      slug: "ferraillage",
+      route: "/app/calculateur/ferraillage",
+      sortOrder: 10,
       isActive: true,
       moduleId: calculateur.id,
     },
@@ -56,20 +70,14 @@ async function ensureCalculateurAndFerraillage() {
 }
 
 async function enableForSubscription(subscriptionId, moduleId, subModuleId) {
-  // Lien Subscription <-> Module
   await prisma.subscriptionModule.upsert({
-    where: {
-      subscriptionId_moduleId: { subscriptionId, moduleId },
-    },
+    where: { subscriptionId_moduleId: { subscriptionId, moduleId } },
     update: {},
     create: { subscriptionId, moduleId },
   });
 
-  // Lien Subscription <-> SubModule
   await prisma.subscriptionSubModule.upsert({
-    where: {
-      subscriptionId_subModuleId: { subscriptionId, subModuleId },
-    },
+    where: { subscriptionId_subModuleId: { subscriptionId, subModuleId } },
     update: {},
     create: { subscriptionId, subModuleId },
   });
@@ -81,7 +89,6 @@ async function main() {
 
   const { calculateur, ferraillage } = await ensureCalculateurAndFerraillage();
 
-  // ✅ Activer pour les 2 subscriptions (si tu ne veux pas activer, supprime ces 2 lignes)
   await enableForSubscription(admin.subscription.id, calculateur.id, ferraillage.id);
   await enableForSubscription(ahmed.subscription.id, calculateur.id, ferraillage.id);
 

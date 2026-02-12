@@ -11,10 +11,15 @@ model Module {
   id        String    @id @default(cuid())
   key       ModuleKey @unique
   name      String
+  slug      String    @unique
+  route     String
+  sortOrder Int       @default(100)
   isActive  Boolean   @default(true)
 
   subscriptions SubscriptionModule[]
   subModules     SubModule[]
+
+  @@index([sortOrder])
 }
 
 model SubscriptionModule {
@@ -32,12 +37,17 @@ model SubModule {
   id        String       @id @default(cuid())
   key       SubModuleKey @unique
   name      String
+  slug      String       @unique
+  route     String
+  sortOrder Int          @default(100)
   isActive  Boolean      @default(true)
 
   moduleId  String
   module    Module       @relation(fields: [moduleId], references: [id])
 
   subscriptions SubscriptionSubModule[]
+
+  @@index([moduleId, sortOrder])
 }
 
 model SubscriptionSubModule {

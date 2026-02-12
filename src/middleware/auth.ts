@@ -1,7 +1,16 @@
+// src/middleware/auth.ts
 import jwt, { type JwtPayload } from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 
 type AuthJwtPayload = JwtPayload & { sub?: string };
+
+declare global {
+  namespace Express {
+    interface Request {
+      userId?: string;
+    }
+  }
+}
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.access_token;

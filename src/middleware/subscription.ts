@@ -1,6 +1,25 @@
 import type { Request, Response, NextFunction } from "express";
 import { prisma } from "@/db";
 
+declare global {
+  namespace Express {
+    interface Request {
+      auth?: {
+        userId: string;
+        subscriptionId: string;
+        moduleKeys: string[];
+        subModuleKeys: string[];
+        subscription: {
+          status: string;
+          plan: string | null;
+          billingCycle: string | null;
+          currentPeriodEnd: Date | null;
+        };
+      };
+    }
+  }
+}
+
 function isExpired(status: unknown, currentPeriodEnd: Date | null) {
   const st = String(status ?? "");
   if (st === "EXPIRED") return true;
@@ -24,7 +43,29 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
 
   const sub = await prisma.subscription.findUnique({
     where: { id: subscriptionId },
-    include: { modules: true },
+    select: {
+      id: true,
+      status: true,
+      plan: true,
+      billingCycle: true,
+      currentPeriodEnd: true,
+      modules: {
+        select: {
+          module: { select: { key: true, isActive: true } },
+        },
+      },
+      subModules: {
+        select: {
+          subModule: {
+            select: {
+              key: true,
+              isActive: true,
+              module: { select: { key: true, isActive: true } },
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!sub) {
@@ -45,30 +86,66 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
     return res.status(403).json({ error: "Subscription expired or invalid", code: "SUBSCRIPTION_INVALID" });
   }
 
-  const moduleKeys = (sub.modules ?? [])
-    .map((m: any) => m?.key ?? m?.moduleKey ?? m?.code ?? m?.name ?? m?.id ?? null)
-    .filter((x: any): x is string => typeof x === "string" && x.length > 0);
+  const moduleKeys = Array.from(
+    new Set(
+      (sub.modules ?? [])
+        .filter((m) => m.module?.isActive !== false)
+        .map((m) => m.module.key)
+    )
+  );
 
-  (req as any).subscription = sub;
-  (req as any).moduleKeys = moduleKeys;
+  const moduleKeySet = new Set(moduleKeys);
 
-  return next();
+  const subModuleKeys = Array.from(
+    new Set(
+      (sub.subModules ?? [])
+        .filter((s) => s.subModule?.isActive !== false)
+        .filter((s) => s.subModule?.module?.isActive !== false)
+        .filter((s) => moduleKeySet.has(s.subModule.module.key))
+        .map((s) => s.subModule.key)
+    )
+  );
+
+  req.auth = {
+    userId,
+    subscriptionId: sub.id,
+    moduleKeys,
+    subModuleKeys,
+    subscription: {
+      status: String(sub.status),
+      plan: sub.plan ? String(sub.plan) : null,
+      billingCycle: sub.billingCycle ? String(sub.billingCycle) : null,
+      currentPeriodEnd: sub.currentPeriodEnd ?? null,
+    },
+  };
+
+  next();
 }
 
 export function requireModulesSelected(req: Request, res: Response, next: NextFunction) {
-  const moduleKeys = (req as any).moduleKeys as string[] | undefined;
-  if (!moduleKeys || moduleKeys.length === 0) {
+  const keys = req.auth?.moduleKeys ?? [];
+  if (keys.length === 0) {
     return res.status(403).json({ error: "Modules selection required", code: "MODULES_REQUIRED" });
   }
-  return next();
+  next();
 }
 
 export function requireModule(moduleKey: string) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const moduleKeys = (req as any).moduleKeys as string[] | undefined;
-    if (!moduleKeys || !moduleKeys.includes(moduleKey)) {
+    const keys = req.auth?.moduleKeys ?? [];
+    if (!keys.includes(moduleKey)) {
       return res.status(403).json({ error: "Module not enabled", code: "MODULE_NOT_ENABLED" });
     }
-    return next();
+    next();
+  };
+}
+
+export function requireSubModule(subModuleKey: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const keys = req.auth?.subModuleKeys ?? [];
+    if (!keys.includes(subModuleKey)) {
+      return res.status(403).json({ error: "SubModule not enabled", code: "SUBMODULE_NOT_ENABLED" });
+    }
+    next();
   };
 }

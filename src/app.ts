@@ -8,6 +8,7 @@ import rateLimit from "express-rate-limit";
 import { authRouter } from "@/routes/auth.routes";
 import { meRouter } from "@/routes/me.routes";
 import { onboardingRouter } from "@/routes/onboarding.routes";
+import { modulesRouter } from "@/routes/modules.routes";
 
 import { requireAuth } from "@/middleware/auth";
 import { requireSubscriptionValid, requireModulesSelected } from "@/middleware/subscription";
@@ -46,6 +47,8 @@ export function createApp() {
   app.use("/me", requireAuth, meRouter);
 
   app.use("/onboarding", requireAuth, onboardingRouter);
+
+  app.use("/modules", modulesRouter);
 
   app.use("/app", requireAuth, requireSubscriptionValid, requireModulesSelected, (_req, res) => {
     return res.json({ ok: true });

@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { prisma } from "@/db";
 import { requireAuth } from "@/middleware/auth";
-import { ModuleKey } from "@prisma/client";
+import { ModuleKey, SubModuleKey } from "@prisma/client";
 
 export const meRouter = Router();
 
@@ -48,6 +48,11 @@ meRouter.get("/", requireAuth, async (req, res) => {
               module: { select: { key: true, name: true } },
             },
           },
+          subModules: {
+            select: {
+              subModule: { select: { key: true, name: true } },
+            },
+          },
         },
       },
     },
@@ -61,6 +66,11 @@ meRouter.get("/", requireAuth, async (req, res) => {
     sub?.modules
       ?.map((row) => row.module?.key ?? null)
       .filter((x): x is ModuleKey => x !== null) ?? [];
+
+  const subModules: SubModuleKey[] =
+    sub?.subModules
+      ?.map((row) => row.subModule?.key ?? null)
+      .filter((x): x is SubModuleKey => x !== null) ?? [];
 
   const planSelected = Boolean(sub?.plan && sub?.billingCycle);
   const modulesSelected = modules.length > 0;
@@ -94,6 +104,7 @@ meRouter.get("/", requireAuth, async (req, res) => {
       : null,
     plan: sub?.plan ? String(sub.plan) : null,
     modules,
+    subModules,
     onboarding: {
       planSelected,
       modulesSelected,

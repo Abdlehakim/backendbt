@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "@/db";
+import { ModuleKey as PrismaModuleKey, SubModuleKey as PrismaSubModuleKey } from "@prisma/client";
 
 export const onboardingRouter = Router();
 
@@ -9,15 +10,19 @@ const planSchema = z.object({
   billingCycle: z.enum(["MONTHLY", "YEARLY"]),
 });
 
-const modulesSchema = z
-  .object({
-    moduleKeys: z.array(z.enum(["MODULE_1", "MODULE_2"])).min(1).max(2),
-  })
-  .or(
-    z.object({
-      modules: z.array(z.enum(["MODULE_1", "MODULE_2"])).min(1).max(2),
-    })
-  );
+const modulesSchema = z.union([
+  z.object({
+    moduleKeys: z.array(z.nativeEnum(PrismaModuleKey)).min(1).max(2),
+    subModuleKeys: z.array(z.nativeEnum(PrismaSubModuleKey)).optional().default([]),
+  }),
+  z.object({
+    modules: z.array(z.nativeEnum(PrismaModuleKey)).min(1).max(2),
+    subModuleKeys: z.array(z.nativeEnum(PrismaSubModuleKey)).optional().default([]),
+  }),
+]);
+
+type ModuleKey = PrismaModuleKey;
+type SubModuleKey = PrismaSubModuleKey;
 
 function addMonth(d: Date) {
   const x = new Date(d);
@@ -53,13 +58,7 @@ onboardingRouter.post("/plan", async (req, res) => {
 
   if (!subscriptionId) {
     const sub = await prisma.subscription.create({
-      data: {
-        status: "ACTIVE",
-        plan,
-        billingCycle,
-        seats,
-        currentPeriodEnd,
-      },
+      data: { status: "ACTIVE", plan, billingCycle, seats, currentPeriodEnd },
       select: { id: true },
     });
 
@@ -73,13 +72,7 @@ onboardingRouter.post("/plan", async (req, res) => {
 
   await prisma.subscription.update({
     where: { id: subscriptionId },
-    data: {
-      status: "ACTIVE",
-      plan,
-      billingCycle,
-      seats,
-      currentPeriodEnd,
-    },
+    data: { status: "ACTIVE", plan, billingCycle, seats, currentPeriodEnd },
   });
 
   return res.json({ ok: true });
@@ -92,8 +85,10 @@ onboardingRouter.post("/modules", async (req, res) => {
   const parsed = modulesSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
 
-  const moduleKeys =
+  const moduleKeys: ModuleKey[] =
     "moduleKeys" in parsed.data ? parsed.data.moduleKeys : parsed.data.modules;
+
+  const subModuleKeysInput: SubModuleKey[] = parsed.data.subModuleKeys ?? [];
 
   const u = await prisma.user.findUnique({
     where: { id: userId },
@@ -114,36 +109,110 @@ onboardingRouter.post("/modules", async (req, res) => {
     return res.status(403).json({ error: "Plan selection required", code: "PLAN_REQUIRED" });
   }
 
-  const existing = await prisma.module.findMany({
-    where: { key: { in: moduleKeys } },
+  const moduleRows = await prisma.module.findMany({
+    where: { key: { in: moduleKeys }, isActive: true },
     select: { id: true, key: true },
   });
 
-  const existingKeys = new Set(existing.map((m) => m.key));
-  const missing = moduleKeys.filter((k) => !existingKeys.has(k));
-
-  if (missing.length > 0) {
-    await prisma.module.createMany({
-      data: missing.map((k) => ({ key: k, name: k })),
-      skipDuplicates: true,
+  if (moduleRows.length !== moduleKeys.length) {
+    const found = new Set(moduleRows.map((m) => m.key));
+    const missing = moduleKeys.filter((k) => !found.has(k));
+    return res.status(400).json({
+      error: "Unknown or inactive module(s)",
+      code: "MODULE_NOT_FOUND",
+      missing,
     });
   }
 
-  const moduleRows = await prisma.module.findMany({
-    where: { key: { in: moduleKeys } },
-    select: { id: true, key: true },
+  const moduleIdByKey = new Map<ModuleKey, string>(moduleRows.map((m) => [m.key, m.id]));
+  const moduleKeyById = new Map<string, ModuleKey>(moduleRows.map((m) => [m.id, m.key]));
+
+  const subRows = await prisma.subModule.findMany({
+    where: { isActive: true, moduleId: { in: moduleRows.map((m) => m.id) } },
+    select: { id: true, key: true, moduleId: true },
   });
 
-  await prisma.subscriptionModule.deleteMany({
-    where: { subscriptionId },
-  });
+  const allowedSubModuleIdByKey = new Map<SubModuleKey, string>();
+  const requiredSubKeysByModule = new Map<ModuleKey, Set<SubModuleKey>>();
+  const subModuleParentByKey = new Map<SubModuleKey, ModuleKey>();
 
-  await prisma.subscriptionModule.createMany({
-    data: moduleRows.map((m) => ({
-      subscriptionId,
-      moduleId: m.id,
-    })),
-    skipDuplicates: true,
+  for (const s of subRows) {
+    const mk = moduleKeyById.get(s.moduleId);
+    if (!mk) continue;
+
+    const sk = s.key as SubModuleKey;
+
+    allowedSubModuleIdByKey.set(sk, s.id);
+    subModuleParentByKey.set(sk, mk);
+
+    const set = requiredSubKeysByModule.get(mk) ?? new Set<SubModuleKey>();
+    set.add(sk);
+    requiredSubKeysByModule.set(mk, set);
+  }
+
+  const subModuleKeys = Array.from(new Set(subModuleKeysInput));
+
+  const invalidSubs = subModuleKeys.filter((k) => !allowedSubModuleIdByKey.has(k));
+  if (invalidSubs.length) {
+    return res.status(400).json({
+      error: "Unknown or inactive submodule(s), or submodule not attached to selected module(s)",
+      code: "SUBMODULE_NOT_ALLOWED",
+      invalid: invalidSubs,
+    });
+  }
+
+  for (const mk of moduleKeys) {
+    const required = requiredSubKeysByModule.get(mk);
+    if (!required || required.size === 0) continue;
+
+    const ok = subModuleKeys.some((k) => required.has(k));
+    if (!ok) {
+      return res.status(400).json({
+        error: "SubModule selection required for this module",
+        code: "SUBMODULE_REQUIRED",
+        moduleKey: mk,
+        requiredSubModules: Array.from(required),
+      });
+    }
+  }
+
+  for (const k of subModuleKeys) {
+    const parent = subModuleParentByKey.get(k);
+    if (parent && !moduleKeys.includes(parent)) {
+      return res.status(400).json({
+        error: "SubModule requires its parent module",
+        code: "MODULE_REQUIRED_FOR_SUBMODULE",
+        subModuleKey: k,
+        requiredModule: parent,
+      });
+    }
+  }
+
+  const subModuleIds = subModuleKeys
+    .map((k) => allowedSubModuleIdByKey.get(k))
+    .filter((x): x is string => typeof x === "string" && x.length > 0);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.subscriptionModule.deleteMany({ where: { subscriptionId } });
+    await tx.subscriptionSubModule.deleteMany({ where: { subscriptionId } });
+
+    await tx.subscriptionModule.createMany({
+      data: moduleKeys.map((k) => ({
+        subscriptionId,
+        moduleId: moduleIdByKey.get(k)!,
+      })),
+      skipDuplicates: true,
+    });
+
+    if (subModuleIds.length) {
+      await tx.subscriptionSubModule.createMany({
+        data: subModuleIds.map((subModuleId) => ({
+          subscriptionId,
+          subModuleId,
+        })),
+        skipDuplicates: true,
+      });
+    }
   });
 
   return res.json({ ok: true });
