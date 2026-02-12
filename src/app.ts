@@ -8,7 +8,6 @@ import rateLimit from "express-rate-limit";
 import { authRouter } from "@/routes/auth.routes";
 import { meRouter } from "@/routes/me.routes";
 
-
 export function createApp() {
   const app = express();
 
@@ -35,23 +34,20 @@ export function createApp() {
     })
   );
 
+  app.get("/", (req, res) => res.status(200).send("OK"));
   app.get("/health", (req, res) => res.json({ ok: true }));
 
   app.use("/auth", authRouter);
   app.use("/me", meRouter);
 
   app.use((req, res) => res.status(404).json({ error: "Not found" }));
-app.use((err: unknown, req: any, res: any, next: any) => {
-  console.error(err);
 
-  const message = err instanceof Error ? err.message : "Server error";
-
-  if (process.env.NODE_ENV !== "production") {
-    return res.status(500).json({ error: message });
-  }
-
-  return res.status(500).json({ error: "Server error" });
-});
+  app.use((err: unknown, req: any, res: any, next: any) => {
+    console.error(err);
+    const message = err instanceof Error ? err.message : "Server error";
+    if (process.env.NODE_ENV !== "production") return res.status(500).json({ error: message });
+    return res.status(500).json({ error: "Server error" });
+  });
 
   return app;
 }

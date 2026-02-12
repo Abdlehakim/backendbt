@@ -5,16 +5,17 @@
   "type": "commonjs",
   "main": "dist/server.js",
   "scripts": {
- "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json",
-  "start": "node dist/server.js",
-  "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json && tsc-alias -p tsconfig.json",
+    "start": "node dist/server.js",
     "prisma:format": "prisma format",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy"
   },
   "prisma": {
-    "schema": "prisma/schema"
+    "schema": "prisma/schema",
+     "seed": "node prisma/seed.js"
   },
   "dependencies": {
     "@prisma/adapter-mariadb": "^7.3.0",

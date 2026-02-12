@@ -29,6 +29,9 @@ function createApp() {
         origin: process.env.CORS_ORIGIN,
         credentials: true,
     }));
+    app.get("/", (req, res) => {
+        res.status(200).send("OK");
+    });
     app.get("/health", (req, res) => res.json({ ok: true }));
     app.use("/auth", auth_routes_1.authRouter);
     app.use("/me", me_routes_1.meRouter);
