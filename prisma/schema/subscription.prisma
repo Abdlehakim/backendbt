@@ -1,0 +1,32 @@
+enum Plan {
+  INDIVIDUAL
+  ENTERPRISE
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  EXPIRED
+  PAST_DUE
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+model Subscription {
+  id               String             @id @default(cuid())
+  status           SubscriptionStatus @default(INACTIVE)
+  plan             Plan?
+  billingCycle     BillingCycle?
+  seats            Int                @default(1)
+  currentPeriodEnd DateTime?
+
+  users            User[]
+  modules          SubscriptionModule[]
+  subModules       SubscriptionSubModule[] // keep only if you created this model
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

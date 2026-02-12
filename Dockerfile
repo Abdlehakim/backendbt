@@ -9,12 +9,15 @@ RUN npm ci
 
 COPY . .
 
-# ✅ Provide DATABASE_URL at build time so prisma can load config
-ARG DATABASE_URL="postgresql://projectbt:projectbt@db:5432/projectbt?schema=public"
+# Provide DATABASE_URL at build time so prisma can load prisma.config.ts
+# (Should be MySQL, since your compose runs mysql:8.4)
+ARG DATABASE_URL
 ENV DATABASE_URL=$DATABASE_URL
 
-RUN ./node_modules/.bin/prisma generate
+# ✅ IMPORTANT: generate using the schema folder (multi-file schema)
+RUN ./node_modules/.bin/prisma generate --schema prisma/schema
+
 RUN npm run build
 
-EXPOSE 3000
+EXPOSE 4000
 CMD ["node", "dist/server.js"]

@@ -50,7 +50,8 @@ authRouter.post("/signup", async (req, res) => {
     data: {
       email,
       passwordHash,
-      subscription: { create: { status: "inactive" } },
+      // ✅ enum value must be uppercase (matches SubscriptionStatus enum)
+      subscription: { create: { status: "INACTIVE" } },
     },
     select: { id: true, email: true },
   });
@@ -81,7 +82,7 @@ authRouter.post("/login", async (req, res) => {
   return res.json({ ok: true });
 });
 
-authRouter.post("/logout", (req, res) => {
+authRouter.post("/logout", (_req, res) => {
   clearAuthCookie(res);
   return res.json({ ok: true });
 });

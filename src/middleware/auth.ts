@@ -1,5 +1,7 @@
-import jwt, { JwtPayload } from "jsonwebtoken";
+import jwt, { type JwtPayload } from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
+
+type AuthJwtPayload = JwtPayload & { sub?: string };
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.access_token;
@@ -15,7 +17,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    const payload = decoded as JwtPayload;
+    const payload = decoded as AuthJwtPayload;
     const userId = typeof payload.sub === "string" ? payload.sub : null;
 
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
