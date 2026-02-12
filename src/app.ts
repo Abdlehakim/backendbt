@@ -42,19 +42,27 @@ export function createApp() {
   app.get("/", (_req, res) => res.status(200).send("OK"));
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
+  // ✅ Public
   app.use("/auth", authRouter);
 
+  // ✅ Authenticated
   app.use("/me", requireAuth, meRouter);
 
+  // ✅ Onboarding must be accessible after login,
+  // even if subscription/modules not completed yet
   app.use("/onboarding", requireAuth, onboardingRouter);
 
-  app.use("/modules", modulesRouter);
+  // ✅ Modules catalog + selection should require auth + valid subscription (plan must be selected)
+  // If you want catalog available before plan, remove requireSubscriptionValid here.
+  app.use("/modules", requireAuth, requireSubscriptionValid, modulesRouter);
 
+  // ✅ App/Dashboard APIs must require modules selected
+  // (If you later create appRouter, replace the handler with appRouter)
   app.use("/app", requireAuth, requireSubscriptionValid, requireModulesSelected, (_req, res) => {
     return res.json({ ok: true });
   });
 
-  app.use((req, res) => res.status(404).json({ error: "Not found" }));
+  app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 
   app.use((err: unknown, _req: any, res: any, _next: any) => {
     console.error(err);

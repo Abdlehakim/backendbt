@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { prisma } from "@/db";
+import { ModuleKey, SubModuleKey } from "@prisma/client";
 
 declare global {
   namespace Express {
@@ -7,8 +8,8 @@ declare global {
       auth?: {
         userId: string;
         subscriptionId: string;
-        moduleKeys: string[];
-        subModuleKeys: string[];
+        moduleKeys: ModuleKey[];
+        subModuleKeys: SubModuleKey[];
         subscription: {
           status: string;
           plan: string | null;
@@ -16,6 +17,7 @@ declare global {
           currentPeriodEnd: Date | null;
         };
       };
+      userId?: string;
     }
   }
 }
@@ -49,11 +51,7 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
       plan: true,
       billingCycle: true,
       currentPeriodEnd: true,
-      modules: {
-        select: {
-          module: { select: { key: true, isActive: true } },
-        },
-      },
+      modules: { select: { module: { select: { key: true, isActive: true } } } },
       subModules: {
         select: {
           subModule: {
@@ -92,9 +90,9 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
         .filter((m) => m.module?.isActive !== false)
         .map((m) => m.module.key)
     )
-  );
+  ) as ModuleKey[];
 
-  const moduleKeySet = new Set(moduleKeys);
+  const moduleKeySet = new Set<ModuleKey>(moduleKeys);
 
   const subModuleKeys = Array.from(
     new Set(
@@ -104,7 +102,7 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
         .filter((s) => moduleKeySet.has(s.subModule.module.key))
         .map((s) => s.subModule.key)
     )
-  );
+  ) as SubModuleKey[];
 
   req.auth = {
     userId,
@@ -123,14 +121,19 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
 }
 
 export function requireModulesSelected(req: Request, res: Response, next: NextFunction) {
-  const keys = req.auth?.moduleKeys ?? [];
-  if (keys.length === 0) {
+  const moduleKeys = req.auth?.moduleKeys ?? [];
+  const subModuleKeys = req.auth?.subModuleKeys ?? [];
+
+  if (moduleKeys.length === 0) {
     return res.status(403).json({ error: "Modules selection required", code: "MODULES_REQUIRED" });
+  }
+  if (subModuleKeys.length === 0) {
+    return res.status(403).json({ error: "SubModules selection required", code: "SUBMODULES_REQUIRED" });
   }
   next();
 }
 
-export function requireModule(moduleKey: string) {
+export function requireModule(moduleKey: ModuleKey) {
   return (req: Request, res: Response, next: NextFunction) => {
     const keys = req.auth?.moduleKeys ?? [];
     if (!keys.includes(moduleKey)) {
@@ -140,7 +143,7 @@ export function requireModule(moduleKey: string) {
   };
 }
 
-export function requireSubModule(subModuleKey: string) {
+export function requireSubModule(subModuleKey: SubModuleKey) {
   return (req: Request, res: Response, next: NextFunction) => {
     const keys = req.auth?.subModuleKeys ?? [];
     if (!keys.includes(subModuleKey)) {
