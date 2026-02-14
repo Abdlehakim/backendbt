@@ -1,0 +1,118 @@
+// prisma/schema/attFerraillage.prisma
+
+enum FerMouvementType {
+  LIVRAISON
+  TRANSFERT
+  AJUSTEMENT
+}
+
+/* =========================================================
+   RAPPORT 1 : ETAT DE FER LIVRE AU CHANTIER
+   ========================================================= */
+
+model FerEtatChantier {
+  id           String     @id @default(cuid())
+
+  // parent projet/chantier
+  rapportId    String
+  rapport      FerRapport @relation(fields: [rapportId], references: [id], onDelete: Cascade)
+
+  // données propres à CE document
+  etatDate     DateTime?  // date imprimée en haut (ex: 25-11-2025)
+
+  mouvements   FerMouvement[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([rapportId])
+  @@index([rapportId, etatDate])
+}
+
+model FerMouvement {
+  id           String           @id @default(cuid())
+  etatId       String
+  etat         FerEtatChantier  @relation(fields: [etatId], references: [id], onDelete: Cascade)
+
+  date         DateTime
+  type         FerMouvementType @default(LIVRAISON)
+
+  bonLivraison String?
+  note         String?
+
+  lignes       FerMouvementLigne[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([etatId, date])
+  @@index([bonLivraison])
+}
+
+model FerMouvementLigne {
+  id          String       @id @default(cuid())
+  mouvementId String
+  mouvement   FerMouvement @relation(fields: [mouvementId], references: [id], onDelete: Cascade)
+
+  diametreId  String
+  diametre    FerDiametre  @relation(fields: [diametreId], references: [id])
+
+  qty         Decimal      // autoriser négatif (TRANSFERT) ex: -3.500
+
+  @@unique([mouvementId, diametreId])
+  @@index([diametreId])
+}
+
+/* =========================================================
+   RAPPORT 2 : Quantité restante non confectionné (snapshots)
+   ========================================================= */
+
+model FerRestantNonConfectionne {
+  id           String     @id @default(cuid())
+
+  // parent projet/chantier
+  rapportId    String
+  rapport      FerRapport @relation(fields: [rapportId], references: [id], onDelete: Cascade)
+
+  // données propres à CE document
+  rapportDate  DateTime?  // date imprimée (si tu as un "Le: ...")
+
+  snapshots    FerRestantSnapshot[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([rapportId])
+  @@index([rapportId, rapportDate])
+}
+
+model FerRestantSnapshot {
+  id         String                    @id @default(cuid())
+  rapportId  String
+  rapport    FerRestantNonConfectionne @relation(fields: [rapportId], references: [id], onDelete: Cascade)
+
+  date       DateTime
+  note       String?
+
+  lignes     FerRestantLigne[]
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([rapportId, date])
+  @@index([rapportId, date])
+}
+
+model FerRestantLigne {
+  id          String             @id @default(cuid())
+  snapshotId  String
+  snapshot    FerRestantSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  diametreId  String
+  diametre    FerDiametre        @relation(fields: [diametreId], references: [id])
+
+  qty         Decimal
+
+  @@unique([snapshotId, diametreId])
+  @@index([diametreId])
+}

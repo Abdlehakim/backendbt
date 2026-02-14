@@ -9,6 +9,7 @@ import { authRouter } from "@/routes/auth.routes";
 import { meRouter } from "@/routes/me.routes";
 import { onboardingRouter } from "@/routes/onboarding.routes";
 import { modulesRouter } from "@/routes/modules.routes";
+import { ferraillageRouter } from "@/routes/ferraillage.routes";
 
 import { requireAuth } from "@/middleware/auth";
 import { requireSubscriptionValid, requireModulesSelected } from "@/middleware/subscription";
@@ -42,25 +43,25 @@ export function createApp() {
   app.get("/", (_req, res) => res.status(200).send("OK"));
   app.get("/health", (_req, res) => res.json({ ok: true }));
 
-  // ✅ Public
-  app.use("/auth", authRouter);
+  const api = express.Router();
 
-  // ✅ Authenticated
-  app.use("/me", requireAuth, meRouter);
+  api.use("/auth", authRouter);
+  api.use("/me", requireAuth, meRouter);
+  api.use("/onboarding", requireAuth, onboardingRouter);
+  api.use("/modules", requireAuth, requireSubscriptionValid, modulesRouter);
+  api.use(
+    "/ferraillage",
+    requireAuth,
+    requireSubscriptionValid,
+    requireModulesSelected,
+    ferraillageRouter
+  );
 
-  // ✅ Onboarding must be accessible after login,
-  // even if subscription/modules not completed yet
-  app.use("/onboarding", requireAuth, onboardingRouter);
-
-  // ✅ Modules catalog + selection should require auth + valid subscription (plan must be selected)
-  // If you want catalog available before plan, remove requireSubscriptionValid here.
-  app.use("/modules", requireAuth, requireSubscriptionValid, modulesRouter);
-
-  // ✅ App/Dashboard APIs must require modules selected
-  // (If you later create appRouter, replace the handler with appRouter)
-  app.use("/app", requireAuth, requireSubscriptionValid, requireModulesSelected, (_req, res) => {
+  api.use("/app", requireAuth, requireSubscriptionValid, requireModulesSelected, (_req, res) => {
     return res.json({ ok: true });
   });
+
+  app.use("/api", api);
 
   app.use((_req, res) => res.status(404).json({ error: "Not found" }));
 
@@ -73,3 +74,4 @@ export function createApp() {
 
   return app;
 }
+

@@ -1,0 +1,35 @@
+// prisma/schema/ferraillage.prisma
+
+model FerRapport {
+  id           String   @id @default(cuid())
+
+  // MAIN PROJECT DATA (chantier)
+  chantierName String
+  sousTraitant String?
+
+  // 1 projet -> plusieurs documents/rapports
+  etats        FerEtatChantier[]
+  restants     FerRestantNonConfectionne[]
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([chantierName])
+  // Optionnel (si tu veux éviter doublons):
+  // @@unique([chantierName, sousTraitant])
+}
+
+/**
+ * Diamètres illimités: 5, 6, 8, 10, 12, 14, 16, 20, 21, ...
+ */
+model FerDiametre {
+  id        String   @id @default(cuid())
+  mm        Int      @unique
+  label     String?
+  isActive  Boolean  @default(true)
+
+  mouvementLignes FerMouvementLigne[]
+  restantLignes   FerRestantLigne[]
+
+  @@index([isActive])
+}
