@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { prisma } from "@/db";
-import { requireAuth } from "@/middleware/auth";
 import { ModuleKey, SubModuleKey } from "@prisma/client";
 
 export const meRouter = Router();
@@ -27,7 +26,7 @@ function computeSubscription(
   };
 }
 
-meRouter.get("/", requireAuth, async (req, res) => {
+meRouter.get("/", async (req, res) => {
   const userId = req.userId;
   if (!userId) return res.status(401).json({ error: "Unauthorized" });
 

@@ -9,12 +9,12 @@ RUN npm ci
 
 COPY . .
 
-# Provide DATABASE_URL at build time so prisma can load prisma.config.ts
-# (Should be MySQL, since your compose runs mysql:8.4)
-ARG DATABASE_URL
+# Provide a valid URL at build time so Prisma can load prisma.config.ts.
+# Runtime values still come from backendbt/.env via compose env_file.
+ARG DATABASE_URL="mysql://app_user:app_pass@db:3306/app_db?allowPublicKeyRetrieval=true&ssl=false"
 ENV DATABASE_URL=$DATABASE_URL
 
-# ✅ IMPORTANT: generate using the schema folder (multi-file schema)
+# Generate using the schema folder (multi-file Prisma schema).
 RUN ./node_modules/.bin/prisma generate --schema prisma/schema
 
 RUN npm run build

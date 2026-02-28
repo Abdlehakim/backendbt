@@ -1,7 +1,5 @@
 import { Router } from "express";
 import { prisma } from "@/db";
-import { requireAuth } from "@/middleware/auth";
-import { requireSubscriptionValid } from "@/middleware/subscription";
 import { ModuleKey, SubModuleKey } from "@prisma/client";
 
 export const modulesRouter = Router();
@@ -31,7 +29,7 @@ function parseSubModuleKeys(v: unknown): SubModuleKey[] {
   return Array.from(new Set(out));
 }
 
-modulesRouter.get("/", requireAuth, requireSubscriptionValid, async (_req, res) => {
+modulesRouter.get("/", async (_req, res) => {
   const modules = await prisma.module.findMany({
     where: { isActive: true },
     select: {
@@ -49,9 +47,9 @@ modulesRouter.get("/", requireAuth, requireSubscriptionValid, async (_req, res) 
   return res.json({ modules });
 });
 
-modulesRouter.get("/enabled", requireAuth, requireSubscriptionValid, async (req, res) => {
-  const moduleKeys = (req as any).auth?.moduleKeys as ModuleKey[] | undefined;
-  const subModuleKeys = (req as any).auth?.subModuleKeys as SubModuleKey[] | undefined;
+modulesRouter.get("/enabled", async (req, res) => {
+  const moduleKeys = req.auth?.moduleKeys;
+  const subModuleKeys = req.auth?.subModuleKeys;
 
   const mk = Array.isArray(moduleKeys) ? moduleKeys : [];
   const sk = Array.isArray(subModuleKeys) ? subModuleKeys : [];
@@ -73,8 +71,8 @@ modulesRouter.get("/enabled", requireAuth, requireSubscriptionValid, async (req,
   return res.json({ modules });
 });
 
-modulesRouter.post("/select", requireAuth, requireSubscriptionValid, async (req, res) => {
-  const subscriptionId = (req as any).auth?.subscriptionId as string | undefined;
+modulesRouter.post("/select", async (req, res) => {
+  const subscriptionId = req.auth?.subscriptionId;
 
   if (!subscriptionId) {
     return res.status(403).json({ error: "Subscription required", code: "SUBSCRIPTION_REQUIRED" });
