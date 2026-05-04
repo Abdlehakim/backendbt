@@ -48,28 +48,36 @@ async function requireFerraillage(req: AuthedRequest, res: Response) {
   return { userId, subscriptionId, subModuleId: sub.id };
 }
 
-function normalizeSousTraitant(v?: string | null) {
-  const s = (v ?? "").trim();
-  return s.length ? s : null;
+function normalizeResponsable(v?: string | null) {
+  return (v ?? "").trim();
+}
+
+function pickResponsable(
+  responsable?: string | null,
+  legacySousTraitant?: string | null,
+) {
+  const next = normalizeResponsable(responsable);
+  if (next) return next;
+  return normalizeResponsable(legacySousTraitant);
 }
 
 async function getOrCreateFerRapport(
   tx: Prisma.TransactionClient,
   chantierName: string,
-  sousTraitant?: string | null,
+  responsable?: string | null,
 ) {
-  const st = normalizeSousTraitant(sousTraitant);
+  const normalizedResponsable = normalizeResponsable(responsable);
 
-  const existing = await tx.ferRapport.findFirst({
-    where: { chantierName, sousTraitant: st },
-    select: { id: true, chantierName: true, sousTraitant: true },
-  });
-
-  if (existing) return existing;
-
-  return tx.ferRapport.create({
-    data: { chantierName, sousTraitant: st },
-    select: { id: true, chantierName: true, sousTraitant: true },
+  return tx.ferRapport.upsert({
+    where: {
+      chantierName_responsable: {
+        chantierName,
+        responsable: normalizedResponsable,
+      },
+    },
+    update: {},
+    create: { chantierName, responsable: normalizedResponsable },
+    select: { id: true, chantierName: true, responsable: true },
   });
 }
 
@@ -82,6 +90,7 @@ const etatCreateSchema = z
   .object({
     rapportId: z.string().cuid().optional(),
     chantierName: z.string().min(1).optional(),
+    responsable: z.string().optional().nullable(),
     sousTraitant: z.string().optional().nullable(),
     etatDate: z.coerce.date().optional().nullable(),
   })
@@ -109,6 +118,7 @@ const restantCreateSchema = z
   .object({
     rapportId: z.string().cuid().optional(),
     chantierName: z.string().min(1).optional(),
+    responsable: z.string().optional().nullable(),
     sousTraitant: z.string().optional().nullable(),
     rapportDate: z.coerce.date().optional().nullable(),
   })
@@ -193,7 +203,7 @@ attFerraillageRouter.post("/etat", async (req: AuthedRequest, res: Response) => 
         const rapport = await getOrCreateFerRapport(
           tx,
           parsed.data.chantierName!,
-          parsed.data.sousTraitant ?? null,
+          pickResponsable(parsed.data.responsable, parsed.data.sousTraitant),
         );
         rapportId = rapport.id;
       } else {
@@ -372,7 +382,7 @@ attFerraillageRouter.post("/restant", async (req: AuthedRequest, res: Response) 
         const rapport = await getOrCreateFerRapport(
           tx,
           parsed.data.chantierName!,
-          parsed.data.sousTraitant ?? null,
+          pickResponsable(parsed.data.responsable, parsed.data.sousTraitant),
         );
         rapportId = rapport.id;
       } else {

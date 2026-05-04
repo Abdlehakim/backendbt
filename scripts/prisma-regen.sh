@@ -65,7 +65,8 @@ dc exec -T backend sh -lc '
   if [ -f prisma/seeds/seed.js ]; then
     node prisma/seeds/seed.js
   else
-    node prisma/seeds/ferraillage.seed.js
+    echo "ERROR: prisma/seeds/seed.js not found"
+    exit 1
   fi
 '
 

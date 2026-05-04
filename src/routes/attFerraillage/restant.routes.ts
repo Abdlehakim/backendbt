@@ -3,7 +3,7 @@ import { prisma } from "@/db";
 import type { AuthedRequest } from "./types";
 import { requireFerraillage } from "./guard";
 import { restantCreateSchema, restantSnapshotSchema } from "./schemas";
-import { ensureDiametres, getOrCreateFerRapport } from "./helpers";
+import { ensureDiametres, getOrCreateFerRapport, pickResponsable } from "./helpers";
 
 export const restantRouter = Router();
 
@@ -22,7 +22,7 @@ restantRouter.post("/restant", async (req: AuthedRequest, res: Response) => {
         const rapport = await getOrCreateFerRapport(
           tx,
           parsed.data.chantierName!,
-          parsed.data.sousTraitant ?? null,
+          pickResponsable(parsed.data.responsable, parsed.data.sousTraitant),
         );
         rapportId = rapport.id;
       } else {

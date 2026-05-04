@@ -1,27 +1,35 @@
 import { Prisma } from "@prisma/client";
 
-export function normalizeSousTraitant(v?: string | null) {
-  const s = (v ?? "").trim();
-  return s.length ? s : null;
+export function normalizeResponsable(v?: string | null) {
+  return (v ?? "").trim();
+}
+
+export function pickResponsable(
+  responsable?: string | null,
+  legacySousTraitant?: string | null,
+) {
+  const next = normalizeResponsable(responsable);
+  if (next) return next;
+  return normalizeResponsable(legacySousTraitant);
 }
 
 export async function getOrCreateFerRapport(
   tx: Prisma.TransactionClient,
   chantierName: string,
-  sousTraitant?: string | null,
+  responsable?: string | null,
 ) {
-  const st = normalizeSousTraitant(sousTraitant);
+  const normalizedResponsable = normalizeResponsable(responsable);
 
-  const existing = await tx.ferRapport.findFirst({
-    where: { chantierName, sousTraitant: st },
-    select: { id: true, chantierName: true, sousTraitant: true },
-  });
-
-  if (existing) return existing;
-
-  return tx.ferRapport.create({
-    data: { chantierName, sousTraitant: st },
-    select: { id: true, chantierName: true, sousTraitant: true },
+  return tx.ferRapport.upsert({
+    where: {
+      chantierName_responsable: {
+        chantierName,
+        responsable: normalizedResponsable,
+      },
+    },
+    update: {},
+    create: { chantierName, responsable: normalizedResponsable },
+    select: { id: true, chantierName: true, responsable: true },
   });
 }
 

@@ -23,9 +23,9 @@ model Subscription {
   seats            Int                @default(1)
   currentPeriodEnd DateTime?
 
-  users            User[]
-  modules          SubscriptionModule[]
-  subModules       SubscriptionSubModule[] // keep only if you created this model
+  users      User[]
+  modules    SubscriptionModule[]
+  subModules SubscriptionSubModule[] // keep only if you created this model
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

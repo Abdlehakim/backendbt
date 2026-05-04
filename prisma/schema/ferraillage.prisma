@@ -1,35 +1,107 @@
 // prisma/schema/ferraillage.prisma
 
+enum FerAcierType {
+  F400
+  F500
+}
+
 model FerRapport {
-  id           String   @id @default(cuid())
+  id String @id @default(cuid())
 
   // MAIN PROJECT DATA (chantier)
   chantierName String
-  sousTraitant String?
+  responsable  String        @default("")
+  acierType    FerAcierType?
+  note         String?
 
   // 1 projet -> plusieurs documents/rapports
-  etats        FerEtatChantier[]
-  restants     FerRestantNonConfectionne[]
+  etats    FerEtatChantier[]
+  restants FerRestantNonConfectionne[]
+  niveaux  FerNiveau[]
+  lignes   FerLigne[]
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  @@unique([chantierName, responsable])
   @@index([chantierName])
-  // Optionnel (si tu veux éviter doublons):
-  // @@unique([chantierName, sousTraitant])
+}
+
+model FerNiveau {
+  id            String                  @id @default(cuid())
+  rapportId     String
+  rapport       FerRapport              @relation(fields: [rapportId], references: [id], onDelete: Cascade)
+  name          String
+  note          String?
+  sortOrder     Int                     @default(0)
+  sousTraitants FerNiveauSousTraitant[]
+  diametres     FerNiveauDiametre[]
+  lignes        FerLigne[]
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  @@unique([rapportId, sortOrder])
+  @@index([rapportId])
+}
+
+model FerNiveauSousTraitant {
+  id        String    @id @default(cuid())
+  niveauId  String
+  niveau    FerNiveau @relation(fields: [niveauId], references: [id], onDelete: Cascade)
+  name      String
+  sortOrder Int       @default(0)
+
+  @@unique([niveauId, sortOrder])
+  @@unique([niveauId, name])
+  @@index([niveauId])
+}
+
+model FerNiveauDiametre {
+  id         String      @id @default(cuid())
+  niveauId   String
+  niveau     FerNiveau   @relation(fields: [niveauId], references: [id], onDelete: Cascade)
+  diametreId String
+  diametre   FerDiametre @relation(fields: [diametreId], references: [id])
+
+  @@unique([niveauId, diametreId])
+  @@index([niveauId])
+  @@index([diametreId])
+}
+
+model FerLigne {
+  id            String     @id @default(cuid())
+  rapportId     String
+  rapport       FerRapport @relation(fields: [rapportId], references: [id], onDelete: Cascade)
+  niveauId      String?
+  niveau        FerNiveau? @relation(fields: [niveauId], references: [id], onDelete: Cascade)
+  designation   String
+  nomenclature  String?
+  nb            Float?
+  hauteur       Float?
+  forme         String?
+  diametreMm    Int?
+  payloadJson   String     @db.LongText
+  qtyByMmJson   String     @db.LongText
+  poidsByMmJson String     @db.LongText
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([rapportId])
+  @@index([niveauId])
 }
 
 /**
- * Diamètres illimités: 5, 6, 8, 10, 12, 14, 16, 20, 21, ...
+ * Diametres illimites: 5, 6, 8, 10, 12, 14, 16, 20, 21, ...
  */
 model FerDiametre {
-  id        String   @id @default(cuid())
-  mm        Int      @unique
-  label     String?
-  isActive  Boolean  @default(true)
+  id       String  @id @default(cuid())
+  mm       Int     @unique
+  label    String?
+  isActive Boolean @default(true)
 
   mouvementLignes FerMouvementLigne[]
   restantLignes   FerRestantLigne[]
+  niveauDiametres FerNiveauDiametre[]
 
   @@index([isActive])
 }

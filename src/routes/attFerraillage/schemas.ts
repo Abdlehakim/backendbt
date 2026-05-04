@@ -11,6 +11,7 @@ export const etatCreateSchema = z
   .object({
     rapportId: z.string().cuid().optional(),
     chantierName: z.string().min(1).optional(),
+    responsable: z.string().optional().nullable(),
     sousTraitant: z.string().optional().nullable(),
     etatDate: z.coerce.date().optional().nullable(),
   })
@@ -38,6 +39,7 @@ export const restantCreateSchema = z
   .object({
     rapportId: z.string().cuid().optional(),
     chantierName: z.string().min(1).optional(),
+    responsable: z.string().optional().nullable(),
     sousTraitant: z.string().optional().nullable(),
     rapportDate: z.coerce.date().optional().nullable(),
   })

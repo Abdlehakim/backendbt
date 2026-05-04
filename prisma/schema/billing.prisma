@@ -17,7 +17,7 @@ model Module {
   isActive  Boolean   @default(true)
 
   subscriptions SubscriptionModule[]
-  subModules     SubModule[]
+  subModules    SubModule[]
 
   @@index([sortOrder])
 }
@@ -42,8 +42,8 @@ model SubModule {
   sortOrder Int          @default(100)
   isActive  Boolean      @default(true)
 
-  moduleId  String
-  module    Module       @relation(fields: [moduleId], references: [id])
+  moduleId String
+  module   Module @relation(fields: [moduleId], references: [id])
 
   subscriptions SubscriptionSubModule[]
 
@@ -56,7 +56,7 @@ model SubscriptionSubModule {
   enabledAt      DateTime @default(now())
 
   subscription Subscription @relation(fields: [subscriptionId], references: [id])
-  subModule     SubModule   @relation(fields: [subModuleId], references: [id])
+  subModule    SubModule    @relation(fields: [subModuleId], references: [id])
 
   @@id([subscriptionId, subModuleId])
 }
