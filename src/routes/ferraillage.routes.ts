@@ -266,6 +266,37 @@ const projectCreateSchema = z.object({
     .default([]),
 });
 
+const projectUpdateSchema = z
+  .object({
+    chantierName: z.string().trim().min(1).optional(),
+    chantier: z.string().trim().min(1).optional(),
+    responsable: z.string().optional().nullable(),
+    sousTraitant: z.string().optional().nullable(),
+    acierType: z.nativeEnum(FerAcierType).optional(),
+    typeAcier: z.nativeEnum(FerAcierType).optional(),
+    note: z.string().optional().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    const chantierName = (value.chantierName ?? value.chantier ?? "").trim();
+    const acierType = value.acierType ?? value.typeAcier;
+
+    if (!chantierName) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["chantier"],
+        message: "Le chantier est obligatoire.",
+      });
+    }
+
+    if (!acierType) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["typeAcier"],
+        message: "Le type d'acier est obligatoire.",
+      });
+    }
+  });
+
 const projectNiveauCreateSchema = z
   .object({
     nomNiveau: z.string().trim().min(1).optional(),
@@ -487,6 +518,78 @@ ferraillageRouter.post("/projects/:projectId/niveaux", async (req: AuthedRequest
   } catch (error) {
     if (error instanceof Error && error.message === "PROJECT_NOT_FOUND") {
       return res.status(404).json({ error: "Project not found" });
+    }
+
+    throw error;
+  }
+});
+
+ferraillageRouter.put("/projects/:projectId", async (req: AuthedRequest, res: Response) => {
+  const auth = await requireFerraillage(req, res);
+  if (!auth) return;
+
+  const projectId = String(req.params.projectId || "").trim();
+  if (!projectId) return res.status(400).json({ error: "Invalid projectId" });
+
+  const parsed = projectUpdateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
+
+  const chantierName = (parsed.data.chantierName ?? parsed.data.chantier ?? "").trim();
+  const responsable = pickResponsable(parsed.data.responsable, parsed.data.sousTraitant);
+  const acierType = parsed.data.acierType ?? parsed.data.typeAcier;
+  const note = optionalString(parsed.data.note);
+
+  if (!chantierName || !acierType) {
+    return res.status(400).json({ error: "Invalid input" });
+  }
+
+  try {
+    const item = await prisma.$transaction(async (tx) => {
+      const project = await tx.ferRapport.findUnique({
+        where: { id: projectId },
+        select: { id: true },
+      });
+
+      if (!project) throw new Error("PROJECT_NOT_FOUND");
+
+      const existing = await tx.ferRapport.findFirst({
+        where: {
+          chantierName,
+          responsable,
+          NOT: { id: projectId },
+        },
+        select: { id: true },
+      });
+
+      if (existing) throw new Error("PROJECT_ALREADY_EXISTS");
+
+      return tx.ferRapport.update({
+        where: { id: projectId },
+        data: {
+          chantierName,
+          responsable,
+          acierType,
+          note,
+        },
+        include: rapportDetailInclude,
+      });
+    });
+
+    return res.json({ item: mapRapportDetail(item) });
+  } catch (error) {
+    if (error instanceof Error && error.message === "PROJECT_NOT_FOUND") {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    if (error instanceof Error && error.message === "PROJECT_ALREADY_EXISTS") {
+      return res.status(409).json({ error: "Project already exists" });
+    }
+
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return res.status(409).json({ error: "Project already exists" });
     }
 
     throw error;
