@@ -599,6 +599,62 @@ async function updateProjectNiveauData(req: AuthedRequest, res: Response) {
 ferraillageRouter.put("/projects/:projectId/niveaux/:niveauId", updateProjectNiveauData);
 ferraillageRouter.put("/rapports/:rapportId/niveaux/:niveauId", updateProjectNiveauData);
 
+async function getProjectOrThrow(tx: Prisma.TransactionClient, projectId: string) {
+  const project = await tx.ferRapport.findUnique({
+    where: { id: projectId },
+    select: { id: true },
+  });
+
+  if (!project) throw new Error("PROJECT_NOT_FOUND");
+  return project;
+}
+
+async function getScopedProjectNiveau(tx: Prisma.TransactionClient, niveauId: string, projectId: string) {
+  const niveau = await tx.ferNiveau.findFirst({
+    where: {
+      id: niveauId,
+      rapportId: projectId,
+    },
+    select: { id: true },
+  });
+
+  if (!niveau) throw new Error("NIVEAU_NOT_FOUND");
+  return niveau;
+}
+
+async function deleteProjectNiveauData(req: AuthedRequest, res: Response) {
+  const auth = await requireFerraillage(req, res);
+  if (!auth) return;
+
+  const projectId = String(req.params.projectId || req.params.rapportId || "").trim();
+  const niveauId = String(req.params.niveauId || "").trim();
+  if (!projectId) return res.status(400).json({ error: "Invalid projectId" });
+  if (!niveauId) return res.status(400).json({ error: "Invalid niveauId" });
+
+  try {
+    await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      await getProjectOrThrow(tx, projectId);
+      await getScopedProjectNiveau(tx, niveauId, projectId);
+      await tx.ferNiveau.delete({ where: { id: niveauId } });
+    });
+
+    return res.json({ ok: true });
+  } catch (error) {
+    if (error instanceof Error && error.message === "PROJECT_NOT_FOUND") {
+      return res.status(404).json({ error: "Project not found" });
+    }
+
+    if (error instanceof Error && error.message === "NIVEAU_NOT_FOUND") {
+      return res.status(404).json({ error: "Niveau not found" });
+    }
+
+    throw error;
+  }
+}
+
+ferraillageRouter.delete("/projects/:projectId/niveaux/:niveauId", deleteProjectNiveauData);
+ferraillageRouter.delete("/rapports/:rapportId/niveaux/:niveauId", deleteProjectNiveauData);
+
 async function updateProjectData(req: AuthedRequest, res: Response) {
   const auth = await requireFerraillage(req, res);
   if (!auth) return;
