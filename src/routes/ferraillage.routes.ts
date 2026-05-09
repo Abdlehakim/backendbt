@@ -836,6 +836,47 @@ ferraillageRouter.put("/lignes/:ligneId", async (req: AuthedRequest, res: Respon
   }
 });
 
+ferraillageRouter.post("/lignes/:ligneId/duplicate", async (req: AuthedRequest, res: Response) => {
+  const auth = await requireFerraillage(req, res);
+  if (!auth) return;
+
+  const ligneId = String(req.params.ligneId || "").trim();
+  if (!ligneId) return res.status(400).json({ error: "Invalid ligneId" });
+
+  const parsed = projectLigneScopeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
+
+  try {
+    const item = await prisma.$transaction(async (tx) => {
+      const source = await getScopedProjectLigne(tx, ligneId, parsed.data.projectId, parsed.data.niveauId);
+
+      return tx.ferLigne.create({
+        data: {
+          rapportId: source.rapportId,
+          niveauId: source.niveauId,
+          designation: source.designation,
+          nomenclature: source.nomenclature,
+          nb: source.nb,
+          hauteur: source.hauteur,
+          forme: source.forme,
+          diametreMm: source.diametreMm,
+          payloadJson: source.payloadJson,
+          qtyByMmJson: source.qtyByMmJson,
+          poidsByMmJson: source.poidsByMmJson,
+        },
+      });
+    });
+
+    return res.status(201).json({ item: mapProjectLigne(item) });
+  } catch (error) {
+    if (error instanceof Error && error.message === "LIGNE_NOT_FOUND") {
+      return res.status(404).json({ error: "Ligne not found" });
+    }
+
+    throw error;
+  }
+});
+
 ferraillageRouter.delete("/lignes/:ligneId", async (req: AuthedRequest, res: Response) => {
   const auth = await requireFerraillage(req, res);
   if (!auth) return;
