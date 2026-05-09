@@ -524,11 +524,11 @@ ferraillageRouter.post("/projects/:projectId/niveaux", async (req: AuthedRequest
   }
 });
 
-ferraillageRouter.put("/projects/:projectId/niveaux/:niveauId", async (req: AuthedRequest, res: Response) => {
+async function updateProjectNiveauData(req: AuthedRequest, res: Response) {
   const auth = await requireFerraillage(req, res);
   if (!auth) return;
 
-  const projectId = String(req.params.projectId || "").trim();
+  const projectId = String(req.params.projectId || req.params.rapportId || "").trim();
   const niveauId = String(req.params.niveauId || "").trim();
   if (!projectId) return res.status(400).json({ error: "Invalid projectId" });
   if (!niveauId) return res.status(400).json({ error: "Invalid niveauId" });
@@ -594,7 +594,10 @@ ferraillageRouter.put("/projects/:projectId/niveaux/:niveauId", async (req: Auth
 
     throw error;
   }
-});
+}
+
+ferraillageRouter.put("/projects/:projectId/niveaux/:niveauId", updateProjectNiveauData);
+ferraillageRouter.put("/rapports/:rapportId/niveaux/:niveauId", updateProjectNiveauData);
 
 async function updateProjectData(req: AuthedRequest, res: Response) {
   const auth = await requireFerraillage(req, res);
