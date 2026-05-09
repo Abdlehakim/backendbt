@@ -524,6 +524,78 @@ ferraillageRouter.post("/projects/:projectId/niveaux", async (req: AuthedRequest
   }
 });
 
+ferraillageRouter.put("/projects/:projectId/niveaux/:niveauId", async (req: AuthedRequest, res: Response) => {
+  const auth = await requireFerraillage(req, res);
+  if (!auth) return;
+
+  const projectId = String(req.params.projectId || "").trim();
+  const niveauId = String(req.params.niveauId || "").trim();
+  if (!projectId) return res.status(400).json({ error: "Invalid projectId" });
+  if (!niveauId) return res.status(400).json({ error: "Invalid niveauId" });
+
+  const parsed = projectNiveauCreateSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
+
+  const nomNiveau = (parsed.data.nomNiveau ?? parsed.data.name ?? "").trim();
+  const note = optionalString(parsed.data.note);
+  const sousTraitants = uniqueStrings(parsed.data.entreprisesMainsOeuvres ?? parsed.data.sousTraitants ?? []);
+  const selectedMms = uniqueInts(parsed.data.diametresActifs ?? parsed.data.selectedMms ?? []);
+
+  try {
+    const item = await prisma.$transaction(async (tx) => {
+      const niveau = await tx.ferNiveau.findFirst({
+        where: {
+          id: niveauId,
+          rapportId: projectId,
+        },
+        select: { id: true },
+      });
+
+      if (!niveau) throw new Error("NIVEAU_NOT_FOUND");
+
+      await ensureDiametres(tx, selectedMms);
+
+      await tx.ferNiveauSousTraitant.deleteMany({
+        where: { niveauId },
+      });
+
+      await tx.ferNiveauDiametre.deleteMany({
+        where: { niveauId },
+      });
+
+      return tx.ferNiveau.update({
+        where: { id: niveauId },
+        data: {
+          name: nomNiveau,
+          note,
+          sousTraitants: sousTraitants.length
+            ? {
+                create: sousTraitants.map((name, index) => ({
+                  name,
+                  sortOrder: index,
+                })),
+              }
+            : undefined,
+          diametres: {
+            create: selectedMms.map((mm) => ({
+              diametre: { connect: { mm } },
+            })),
+          },
+        },
+        include: niveauDetailInclude,
+      });
+    });
+
+    return res.json({ item: mapProjectNiveau(item) });
+  } catch (error) {
+    if (error instanceof Error && error.message === "NIVEAU_NOT_FOUND") {
+      return res.status(404).json({ error: "Niveau not found" });
+    }
+
+    throw error;
+  }
+});
+
 async function updateProjectData(req: AuthedRequest, res: Response) {
   const auth = await requireFerraillage(req, res);
   if (!auth) return;
