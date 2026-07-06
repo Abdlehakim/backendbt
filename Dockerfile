@@ -1,7 +1,7 @@
 FROM node:20-alpine
 WORKDIR /app
 
-ENV NODE_ENV=development
+ENV NODE_ENV=production
 ENV NPM_CONFIG_PRODUCTION=false
 
 COPY package*.json ./
