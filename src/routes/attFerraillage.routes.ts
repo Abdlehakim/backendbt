@@ -63,6 +63,7 @@ function pickResponsable(
 
 async function getOrCreateFerRapport(
   tx: Prisma.TransactionClient,
+  subscriptionId: string,
   chantierName: string,
   responsable?: string | null,
 ) {
@@ -70,13 +71,14 @@ async function getOrCreateFerRapport(
 
   return tx.ferRapport.upsert({
     where: {
-      chantierName_responsable: {
+      subscriptionId_chantierName_responsable: {
+        subscriptionId,
         chantierName,
         responsable: normalizedResponsable,
       },
     },
     update: {},
-    create: { chantierName, responsable: normalizedResponsable },
+    create: { subscriptionId, chantierName, responsable: normalizedResponsable },
     select: { id: true, chantierName: true, responsable: true },
   });
 }
@@ -202,12 +204,16 @@ attFerraillageRouter.post("/etat", async (req: AuthedRequest, res: Response) => 
       if (!rapportId) {
         const rapport = await getOrCreateFerRapport(
           tx,
+          auth.subscriptionId,
           parsed.data.chantierName!,
           pickResponsable(parsed.data.responsable, parsed.data.sousTraitant),
         );
         rapportId = rapport.id;
       } else {
-        const exists = await tx.ferRapport.findUnique({ where: { id: rapportId }, select: { id: true } });
+        const exists = await tx.ferRapport.findFirst({
+          where: { id: rapportId, subscriptionId: auth.subscriptionId },
+          select: { id: true },
+        });
         if (!exists) throw new Error("RAPPORT_NOT_FOUND");
       }
 
@@ -236,7 +242,7 @@ attFerraillageRouter.get("/etat/by-rapport/:rapportId", async (req: AuthedReques
   if (!rapportId) return res.status(400).json({ error: "Invalid rapportId" });
 
   const item = await prisma.ferEtatChantier.findFirst({
-    where: { rapportId },
+    where: { rapportId, rapport: { subscriptionId: auth.subscriptionId } },
     orderBy: [{ etatDate: "desc" }, { createdAt: "desc" }],
     include: {
       rapport: true,
@@ -257,8 +263,8 @@ attFerraillageRouter.get("/etat/:etatId", async (req: AuthedRequest, res: Respon
   const etatId = String(req.params.etatId || "").trim();
   if (!etatId) return res.status(400).json({ error: "Invalid etatId" });
 
-  const item = await prisma.ferEtatChantier.findUnique({
-    where: { id: etatId },
+  const item = await prisma.ferEtatChantier.findFirst({
+    where: { id: etatId, rapport: { subscriptionId: auth.subscriptionId } },
     include: {
       rapport: true,
       mouvements: {
@@ -284,27 +290,40 @@ attFerraillageRouter.post("/etat/:etatId/mouvements", async (req: AuthedRequest,
 
   const { date, type, bonLivraison, note, lignes } = parsed.data;
 
-  const item = await prisma.$transaction(async (tx) => {
-    await ensureDiametres(tx, lignes.map((l) => l.mm));
+  const item = await prisma
+    .$transaction(async (tx) => {
+      const etat = await tx.ferEtatChantier.findFirst({
+        where: { id: etatId, rapport: { subscriptionId: auth.subscriptionId } },
+        select: { id: true },
+      });
 
-    return tx.ferMouvement.create({
-      data: {
-        etatId,
-        date,
-        type,
-        bonLivraison: bonLivraison ?? null,
-        note: note ?? null,
-        lignes: {
-          create: lignes.map((l) => ({
-            diametre: { connect: { mm: l.mm } },
-            qty: l.qty,
-          })),
+      if (!etat) throw new Error("ETAT_NOT_FOUND");
+
+      await ensureDiametres(tx, lignes.map((l) => l.mm));
+
+      return tx.ferMouvement.create({
+        data: {
+          etatId,
+          date,
+          type,
+          bonLivraison: bonLivraison ?? null,
+          note: note ?? null,
+          lignes: {
+            create: lignes.map((l) => ({
+              diametre: { connect: { mm: l.mm } },
+              qty: l.qty,
+            })),
+          },
         },
-      },
-      include: { lignes: { include: { diametre: true } } },
+        include: { lignes: { include: { diametre: true } } },
+      });
+    })
+    .catch((e: unknown) => {
+      if (e instanceof Error && e.message === "ETAT_NOT_FOUND") return null;
+      throw e;
     });
-  });
 
+  if (!item) return res.status(404).json({ error: "Not found" });
   res.json({ item });
 });
 
@@ -320,39 +339,68 @@ attFerraillageRouter.put("/mouvements/:mouvementId", async (req: AuthedRequest, 
 
   const { date, type, bonLivraison, note, lignes } = parsed.data;
 
-  const item = await prisma.$transaction(async (tx) => {
-    if (lignes) {
-      await ensureDiametres(tx, lignes.map((l) => l.mm));
-
-      const diams = await tx.ferDiametre.findMany({
-        where: { mm: { in: Array.from(new Set(lignes.map((l) => l.mm))) } },
-        select: { id: true, mm: true },
+  const item = await prisma
+    .$transaction(async (tx) => {
+      const mouvement = await tx.ferMouvement.findFirst({
+        where: {
+          id: mouvementId,
+          etat: { rapport: { subscriptionId: auth.subscriptionId } },
+        },
+        select: { id: true },
       });
 
-      const idByMm = new Map<number, string>(diams.map((d: { id: string; mm: number }) => [d.mm, d.id]));
+      if (!mouvement) throw new Error("MOUVEMENT_NOT_FOUND");
 
-      await tx.ferMouvementLigne.deleteMany({ where: { mouvementId } });
-      await tx.ferMouvementLigne.createMany({
-        data: lignes.map((l) => ({
-          mouvementId,
-          diametreId: idByMm.get(l.mm)!,
-          qty: l.qty,
-        })),
+      if (lignes) {
+        await ensureDiametres(tx, lignes.map((l) => l.mm));
+
+        const diams = await tx.ferDiametre.findMany({
+          where: { mm: { in: Array.from(new Set(lignes.map((l) => l.mm))) } },
+          select: { id: true, mm: true },
+        });
+
+        const idByMm = new Map<number, string>(diams.map((d: { id: string; mm: number }) => [d.mm, d.id]));
+
+        await tx.ferMouvementLigne.deleteMany({ where: { mouvementId } });
+        await tx.ferMouvementLigne.createMany({
+          data: lignes.map((l) => ({
+            mouvementId,
+            diametreId: idByMm.get(l.mm)!,
+            qty: l.qty,
+          })),
+        });
+      }
+
+      await tx.ferMouvement.updateMany({
+        where: {
+          id: mouvementId,
+          etat: { rapport: { subscriptionId: auth.subscriptionId } },
+        },
+        data: {
+          date: date ?? undefined,
+          type: type ?? undefined,
+          bonLivraison: bonLivraison === undefined ? undefined : bonLivraison,
+          note: note === undefined ? undefined : note,
+        },
       });
-    }
 
-    return tx.ferMouvement.update({
-      where: { id: mouvementId },
-      data: {
-        date: date ?? undefined,
-        type: type ?? undefined,
-        bonLivraison: bonLivraison === undefined ? undefined : bonLivraison,
-        note: note === undefined ? undefined : note,
-      },
-      include: { lignes: { include: { diametre: true } } },
+      const updated = await tx.ferMouvement.findFirst({
+        where: {
+          id: mouvementId,
+          etat: { rapport: { subscriptionId: auth.subscriptionId } },
+        },
+        include: { lignes: { include: { diametre: true } } },
+      });
+
+      if (!updated) throw new Error("MOUVEMENT_NOT_FOUND");
+      return updated;
+    })
+    .catch((e: unknown) => {
+      if (e instanceof Error && e.message === "MOUVEMENT_NOT_FOUND") return null;
+      throw e;
     });
-  });
 
+  if (!item) return res.status(404).json({ error: "Not found" });
   res.json({ item });
 });
 
@@ -363,7 +411,14 @@ attFerraillageRouter.delete("/mouvements/:mouvementId", async (req: AuthedReques
   const mouvementId = String(req.params.mouvementId || "").trim();
   if (!mouvementId) return res.status(400).json({ error: "Invalid mouvementId" });
 
-  await prisma.ferMouvement.delete({ where: { id: mouvementId } });
+  const deleted = await prisma.ferMouvement.deleteMany({
+    where: {
+      id: mouvementId,
+      etat: { rapport: { subscriptionId: auth.subscriptionId } },
+    },
+  });
+
+  if (deleted.count === 0) return res.status(404).json({ error: "Not found" });
   res.json({ ok: true });
 });
 
@@ -381,12 +436,16 @@ attFerraillageRouter.post("/restant", async (req: AuthedRequest, res: Response) 
       if (!rapportId) {
         const rapport = await getOrCreateFerRapport(
           tx,
+          auth.subscriptionId,
           parsed.data.chantierName!,
           pickResponsable(parsed.data.responsable, parsed.data.sousTraitant),
         );
         rapportId = rapport.id;
       } else {
-        const exists = await tx.ferRapport.findUnique({ where: { id: rapportId }, select: { id: true } });
+        const exists = await tx.ferRapport.findFirst({
+          where: { id: rapportId, subscriptionId: auth.subscriptionId },
+          select: { id: true },
+        });
         if (!exists) throw new Error("RAPPORT_NOT_FOUND");
       }
 
@@ -415,7 +474,7 @@ attFerraillageRouter.get("/restant/by-rapport/:rapportId", async (req: AuthedReq
   if (!rapportId) return res.status(400).json({ error: "Invalid rapportId" });
 
   const item = await prisma.ferRestantNonConfectionne.findFirst({
-    where: { rapportId },
+    where: { rapportId, rapport: { subscriptionId: auth.subscriptionId } },
     orderBy: [{ rapportDate: "desc" }, { createdAt: "desc" }],
     include: {
       rapport: true,
@@ -436,8 +495,8 @@ attFerraillageRouter.get("/restant/:restantId", async (req: AuthedRequest, res: 
   const restantId = String(req.params.restantId || "").trim();
   if (!restantId) return res.status(400).json({ error: "Invalid restantId" });
 
-  const item = await prisma.ferRestantNonConfectionne.findUnique({
-    where: { id: restantId },
+  const item = await prisma.ferRestantNonConfectionne.findFirst({
+    where: { id: restantId, rapport: { subscriptionId: auth.subscriptionId } },
     include: {
       rapport: true,
       snapshots: {
@@ -463,52 +522,65 @@ attFerraillageRouter.put("/restant/:restantId/snapshot", async (req: AuthedReque
 
   const { date, note, lignes } = parsed.data;
 
-  const item = await prisma.$transaction(async (tx) => {
-    await ensureDiametres(tx, lignes.map((l) => l.mm));
-
-    const existing = await tx.ferRestantSnapshot.findFirst({
-      where: { rapportId: restantId, date },
-      select: { id: true },
-    });
-
-    const snapId =
-      existing?.id ??
-      (
-        await tx.ferRestantSnapshot.create({
-          data: { rapportId: restantId, date, note: note ?? null },
-          select: { id: true },
-        })
-      ).id;
-
-    if (existing?.id) {
-      await tx.ferRestantSnapshot.update({
-        where: { id: snapId },
-        data: { note: note ?? null },
+  const item = await prisma
+    .$transaction(async (tx) => {
+      const restant = await tx.ferRestantNonConfectionne.findFirst({
+        where: { id: restantId, rapport: { subscriptionId: auth.subscriptionId } },
+        select: { id: true },
       });
-    }
 
-    const diams = await tx.ferDiametre.findMany({
-      where: { mm: { in: Array.from(new Set(lignes.map((l) => l.mm))) } },
-      select: { id: true, mm: true },
+      if (!restant) throw new Error("RESTANT_NOT_FOUND");
+
+      await ensureDiametres(tx, lignes.map((l) => l.mm));
+
+      const existing = await tx.ferRestantSnapshot.findFirst({
+        where: { rapportId: restantId, date },
+        select: { id: true },
+      });
+
+      const snapId =
+        existing?.id ??
+        (
+          await tx.ferRestantSnapshot.create({
+            data: { rapportId: restantId, date, note: note ?? null },
+            select: { id: true },
+          })
+        ).id;
+
+      if (existing?.id) {
+        await tx.ferRestantSnapshot.update({
+          where: { id: snapId },
+          data: { note: note ?? null },
+        });
+      }
+
+      const diams = await tx.ferDiametre.findMany({
+        where: { mm: { in: Array.from(new Set(lignes.map((l) => l.mm))) } },
+        select: { id: true, mm: true },
+      });
+
+      const idByMm = new Map<number, string>(diams.map((d: { id: string; mm: number }) => [d.mm, d.id]));
+
+      await tx.ferRestantLigne.deleteMany({ where: { snapshotId: snapId } });
+      await tx.ferRestantLigne.createMany({
+        data: lignes.map((l) => ({
+          snapshotId: snapId,
+          diametreId: idByMm.get(l.mm)!,
+          qty: l.qty,
+        })),
+      });
+
+      return tx.ferRestantSnapshot.findUnique({
+        where: { id: snapId },
+        include: { lignes: { include: { diametre: true } } },
+      });
+    })
+    .catch((e: unknown) => {
+      if (e instanceof Error && e.message === "RESTANT_NOT_FOUND") return null;
+      throw e;
     });
 
-    const idByMm = new Map<number, string>(diams.map((d: { id: string; mm: number }) => [d.mm, d.id]));
-
-    await tx.ferRestantLigne.deleteMany({ where: { snapshotId: snapId } });
-    await tx.ferRestantLigne.createMany({
-      data: lignes.map((l) => ({
-        snapshotId: snapId,
-        diametreId: idByMm.get(l.mm)!,
-        qty: l.qty,
-      })),
-    });
-
-    return tx.ferRestantSnapshot.findUnique({
-      where: { id: snapId },
-      include: { lignes: { include: { diametre: true } } },
-    });
-  });
-
+  if (!item) return res.status(404).json({ error: "Not found" });
   res.json({ item });
 });
 
@@ -519,6 +591,10 @@ attFerraillageRouter.delete("/restant/:restantId", async (req: AuthedRequest, re
   const restantId = String(req.params.restantId || "").trim();
   if (!restantId) return res.status(400).json({ error: "Invalid restantId" });
 
-  await prisma.ferRestantNonConfectionne.delete({ where: { id: restantId } });
+  const deleted = await prisma.ferRestantNonConfectionne.deleteMany({
+    where: { id: restantId, rapport: { subscriptionId: auth.subscriptionId } },
+  });
+
+  if (deleted.count === 0) return res.status(404).json({ error: "Not found" });
   res.json({ ok: true });
 });

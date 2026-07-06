@@ -35,12 +35,16 @@ meRouter.get("/", async (req, res) => {
     select: {
       id: true,
       email: true,
+      name: true,
+      phone: true,
+      role: true,
       subscription: {
         select: {
           status: true,
           plan: true,
           billingCycle: true,
           seats: true,
+          accountName: true,
           currentPeriodEnd: true,
           modules: {
             select: {
@@ -86,7 +90,13 @@ meRouter.get("/", async (req, res) => {
   const onboardingComplete = subState.valid && planSelected && modulesSelected;
 
   return res.json({
-    user: { id: user.id, email: user.email },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      phone: user.phone,
+      role: user.role,
+    },
     subscriptionActive: subState.valid,
     subscription: sub
       ? {
@@ -94,6 +104,7 @@ meRouter.get("/", async (req, res) => {
           plan: sub.plan ? String(sub.plan) : null,
           billingCycle: sub.billingCycle ? String(sub.billingCycle) : null,
           seats: typeof sub.seats === "number" ? sub.seats : null,
+          accountName: sub.accountName ?? null,
           currentPeriodEnd: subState.currentPeriodEnd
             ? subState.currentPeriodEnd.toISOString()
             : null,

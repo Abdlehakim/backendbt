@@ -8,12 +8,15 @@ declare global {
       auth?: {
         userId: string;
         subscriptionId: string;
+        role: "OWNER" | "MEMBER";
         moduleKeys: ModuleKey[];
         subModuleKeys: SubModuleKey[];
         subscription: {
           status: string;
           plan: string | null;
           billingCycle: string | null;
+          seats: number | null;
+          accountName: string | null;
           currentPeriodEnd: Date | null;
         };
       };
@@ -35,13 +38,13 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
 
   const u = await prisma.user.findUnique({
     where: { id: userId },
-    select: { subscriptionId: true },
+    select: { subscriptionId: true, role: true },
   });
 
-  const subscriptionId = u?.subscriptionId ?? null;
-  if (!subscriptionId) {
+  if (!u?.subscriptionId) {
     return res.status(403).json({ error: "Subscription required", code: "SUBSCRIPTION_REQUIRED" });
   }
+  const subscriptionId = u.subscriptionId;
 
   const sub = await prisma.subscription.findUnique({
     where: { id: subscriptionId },
@@ -50,6 +53,8 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
       status: true,
       plan: true,
       billingCycle: true,
+      seats: true,
+      accountName: true,
       currentPeriodEnd: true,
       modules: { select: { module: { select: { key: true, isActive: true } } } },
       subModules: {
@@ -107,12 +112,15 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
   req.auth = {
     userId,
     subscriptionId: sub.id,
+    role: u.role,
     moduleKeys,
     subModuleKeys,
     subscription: {
       status: String(sub.status),
       plan: sub.plan ? String(sub.plan) : null,
       billingCycle: sub.billingCycle ? String(sub.billingCycle) : null,
+      seats: typeof sub.seats === "number" ? sub.seats : null,
+      accountName: sub.accountName ?? null,
       currentPeriodEnd: sub.currentPeriodEnd ?? null,
     },
   };
@@ -120,16 +128,41 @@ export async function requireSubscriptionValid(req: Request, res: Response, next
   next();
 }
 
-export function requireModulesSelected(req: Request, res: Response, next: NextFunction) {
+export async function requireModulesSelected(req: Request, res: Response, next: NextFunction) {
   const moduleKeys = req.auth?.moduleKeys ?? [];
   const subModuleKeys = req.auth?.subModuleKeys ?? [];
 
   if (moduleKeys.length === 0) {
     return res.status(403).json({ error: "Modules selection required", code: "MODULES_REQUIRED" });
   }
-  if (subModuleKeys.length === 0) {
-    return res.status(403).json({ error: "SubModules selection required", code: "SUBMODULES_REQUIRED" });
+  const activeSubModules = await prisma.subModule.findMany({
+    where: {
+      isActive: true,
+      module: {
+        isActive: true,
+        key: { in: moduleKeys },
+      },
+    },
+    select: {
+      key: true,
+      module: { select: { key: true } },
+    },
+  });
+
+  const selectedSubModuleKeySet = new Set(subModuleKeys);
+  const missingModuleKeys = moduleKeys.filter((moduleKey) => {
+    const required = activeSubModules.filter((s) => s.module.key === moduleKey);
+    if (required.length === 0) return false;
+    return !required.some((s) => selectedSubModuleKeySet.has(s.key));
+  });
+
+  if (missingModuleKeys.length > 0) {
+    return res.status(403).json({
+      error: `SubModules selection required for: ${missingModuleKeys.join(", ")}`,
+      code: "SUBMODULES_REQUIRED",
+    });
   }
+
   next();
 }
 

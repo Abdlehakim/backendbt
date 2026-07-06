@@ -13,6 +13,8 @@ model FerRapport {
   responsable  String        @default("")
   acierType    FerAcierType?
   note         String?
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   // 1 projet -> plusieurs documents/rapports
   etats    FerEtatChantier[]
@@ -23,7 +25,8 @@ model FerRapport {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([chantierName, responsable])
+  @@unique([subscriptionId, chantierName, responsable])
+  @@index([subscriptionId])
   @@index([chantierName])
 }
 

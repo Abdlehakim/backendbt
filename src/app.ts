@@ -10,6 +10,7 @@ import { meRouter } from "@/routes/me.routes";
 import { onboardingRouter } from "@/routes/onboarding.routes";
 import { modulesRouter } from "@/routes/modules.routes";
 import { ferraillageRouter } from "@/routes/ferraillage.routes";
+import { usersRouter } from "@/routes/users.routes";
 
 import { requireAuth } from "@/middleware/auth";
 import { requireSubscriptionValid, requireModulesSelected } from "@/middleware/subscription";
@@ -48,6 +49,7 @@ export function createApp() {
   api.use("/auth", authRouter);
   api.use("/me", requireAuth, meRouter);
   api.use("/onboarding", requireAuth, onboardingRouter);
+  api.use("/users", requireAuth, requireSubscriptionValid, usersRouter);
   api.use("/modules", requireAuth, requireSubscriptionValid, modulesRouter);
   api.use(
     "/ferraillage",

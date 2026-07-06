@@ -6,9 +6,18 @@ import { prisma } from "@/db";
 
 export const authRouter = Router();
 
-const schema = z.object({
+const loginSchema = z.object({
   email: z.string().email().max(190),
   password: z.string().min(8).max(100),
+});
+
+const signupSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional().or(z.literal("")),
+  phone: z.string().trim().max(40).optional().or(z.literal("")),
+  email: z.string().email().max(190),
+  password: z.string().min(8).max(100),
+  accountType: z.enum(["INDIVIDUAL", "ENTERPRISE"]).default("INDIVIDUAL"),
+  companyName: z.string().trim().max(190).optional().or(z.literal("")),
 });
 
 const JWT_SECRET = process.env.JWT_ACCESS_SECRET;
@@ -48,13 +57,11 @@ const jwtExpiresRaw = process.env.JWT_ACCESS_EXPIRES ?? "15m";
 const JWT_EXPIRES_IN = jwtExpiresRaw as SignOptions["expiresIn"];
 const cookieMaxAgeMs = parseExpiresInToMs(jwtExpiresRaw);
 
-// Keep cookie config consistent for set + clear:
 const cookieOptions = {
   httpOnly: true,
   secure: process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production",
   sameSite: (process.env.COOKIE_SAMESITE ?? "lax") as "lax" | "strict" | "none",
   path: "/",
-  // Keep cookie TTL aligned with JWT expiry.
   maxAge: cookieMaxAgeMs,
 };
 
@@ -67,11 +74,19 @@ function clearAuthCookie(res: Response) {
 }
 
 authRouter.post("/signup", async (req, res) => {
-  const parsed = schema.safeParse(req.body);
+  const parsed = signupSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
 
   const email = parsed.data.email.trim().toLowerCase();
   const password = parsed.data.password;
+  const name = parsed.data.name?.trim() || null;
+  const phone = parsed.data.phone?.trim() || null;
+  const accountType = parsed.data.accountType;
+  const seats = accountType === "INDIVIDUAL" ? 1 : 5;
+  const accountName =
+    accountType === "ENTERPRISE"
+      ? (parsed.data.companyName?.trim() || parsed.data.name?.trim() || email)
+      : (parsed.data.name?.trim() || email);
 
   const exists = await prisma.user.findUnique({ where: { email } });
   if (exists) return res.status(409).json({ error: "Email already used" });
@@ -82,13 +97,21 @@ authRouter.post("/signup", async (req, res) => {
     data: {
       email,
       passwordHash,
-      // ✅ enum value must be uppercase (matches SubscriptionStatus enum)
-      subscription: { create: { status: "INACTIVE" } },
+      name,
+      phone,
+      role: "OWNER",
+      subscription: {
+        create: {
+          status: "INACTIVE",
+          plan: accountType,
+          seats,
+          accountName,
+        },
+      },
     },
-    select: { id: true, email: true },
+    select: { id: true, email: true, name: true, phone: true, role: true },
   });
 
-  // Use standard "subject" claim for sub:
   const token = jwt.sign({}, JWT_SECRET, { subject: user.id, expiresIn: JWT_EXPIRES_IN });
 
   setAuthCookie(res, token);
@@ -96,7 +119,7 @@ authRouter.post("/signup", async (req, res) => {
 });
 
 authRouter.post("/login", async (req, res) => {
-  const parsed = schema.safeParse(req.body);
+  const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
 
   const email = parsed.data.email.trim().toLowerCase();

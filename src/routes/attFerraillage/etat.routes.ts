@@ -21,6 +21,7 @@ etatRouter.post("/etat", async (req: AuthedRequest, res: Response) => {
       if (!rapportId) {
         const rapport = await getOrCreateFerRapport(
           tx,
+          auth.subscriptionId,
           parsed.data.chantierName!,
           pickResponsable(parsed.data.responsable, parsed.data.sousTraitant),
         );

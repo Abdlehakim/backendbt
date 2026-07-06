@@ -15,6 +15,7 @@ export function pickResponsable(
 
 export async function getOrCreateFerRapport(
   tx: Prisma.TransactionClient,
+  subscriptionId: string,
   chantierName: string,
   responsable?: string | null,
 ) {
@@ -22,13 +23,14 @@ export async function getOrCreateFerRapport(
 
   return tx.ferRapport.upsert({
     where: {
-      chantierName_responsable: {
+      subscriptionId_chantierName_responsable: {
+        subscriptionId,
         chantierName,
         responsable: normalizedResponsable,
       },
     },
     update: {},
-    create: { chantierName, responsable: normalizedResponsable },
+    create: { subscriptionId, chantierName, responsable: normalizedResponsable },
     select: { id: true, chantierName: true, responsable: true },
   });
 }

@@ -214,8 +214,8 @@ async function sendRapportDetail(req: AuthedRequest, res: Response) {
   const rapportId = String(req.params.rapportId || req.params.projectId || "").trim();
   if (!rapportId) return res.status(400).json({ error: "Invalid rapportId" });
 
-  const item = await prisma.ferRapport.findUnique({
-    where: { id: rapportId },
+  const item = await prisma.ferRapport.findFirst({
+    where: { id: rapportId, subscriptionId: auth.subscriptionId },
     include: rapportDetailInclude,
   });
 
@@ -359,13 +359,14 @@ ferraillageRouter.get("/rapports", async (req: AuthedRequest, res: Response) => 
 
   const items = await prisma.ferRapport.findMany({
     where: q
-        ? {
+      ? {
+          subscriptionId: auth.subscriptionId,
           OR: [
             { chantierName: { contains: q } },
             { responsable: { contains: q } },
           ],
         }
-      : undefined,
+      : { subscriptionId: auth.subscriptionId },
     orderBy: { updatedAt: "desc" },
     select: rapportSummarySelect,
   });
@@ -392,12 +393,11 @@ ferraillageRouter.post("/projects", async (req: AuthedRequest, res: Response) =>
 
   try {
     const item = await prisma.$transaction(async (tx) => {
-      const existing = await tx.ferRapport.findUnique({
+      const existing = await tx.ferRapport.findFirst({
         where: {
-          chantierName_responsable: {
-            chantierName,
-            responsable,
-          },
+          subscriptionId: auth.subscriptionId,
+          chantierName,
+          responsable,
         },
         select: { id: true },
       });
@@ -411,6 +411,7 @@ ferraillageRouter.post("/projects", async (req: AuthedRequest, res: Response) =>
 
       return tx.ferRapport.create({
         data: {
+          subscriptionId: auth.subscriptionId,
           chantierName,
           responsable,
           acierType: parsed.data.acierType,
@@ -476,8 +477,8 @@ ferraillageRouter.post("/projects/:projectId/niveaux", async (req: AuthedRequest
 
   try {
     const item = await prisma.$transaction(async (tx) => {
-      const project = await tx.ferRapport.findUnique({
-        where: { id: projectId },
+      const project = await tx.ferRapport.findFirst({
+        where: { id: projectId, subscriptionId: auth.subscriptionId },
         select: { id: true },
       });
 
@@ -547,6 +548,7 @@ async function updateProjectNiveauData(req: AuthedRequest, res: Response) {
         where: {
           id: niveauId,
           rapportId: projectId,
+          rapport: { subscriptionId: auth.subscriptionId },
         },
         select: { id: true },
       });
@@ -563,27 +565,51 @@ async function updateProjectNiveauData(req: AuthedRequest, res: Response) {
         where: { niveauId },
       });
 
-      return tx.ferNiveau.update({
-        where: { id: niveauId },
-        data: {
-          name: nomNiveau,
-          note,
-          sousTraitants: sousTraitants.length
-            ? {
-                create: sousTraitants.map((name, index) => ({
-                  name,
-                  sortOrder: index,
-                })),
-              }
-            : undefined,
-          diametres: {
-            create: selectedMms.map((mm) => ({
-              diametre: { connect: { mm } },
-            })),
-          },
+      const diametres = await tx.ferDiametre.findMany({
+        where: { mm: { in: selectedMms } },
+        select: { id: true, mm: true },
+      });
+      const diametreIdByMm = new Map(diametres.map((d) => [d.mm, d.id]));
+
+      await tx.ferNiveau.updateMany({
+        where: {
+          id: niveauId,
+          rapportId: projectId,
+          rapport: { subscriptionId: auth.subscriptionId },
+        },
+        data: { name: nomNiveau, note },
+      });
+
+      if (sousTraitants.length) {
+        await tx.ferNiveauSousTraitant.createMany({
+          data: sousTraitants.map((name, index) => ({
+            niveauId,
+            name,
+            sortOrder: index,
+          })),
+        });
+      }
+
+      if (selectedMms.length) {
+        await tx.ferNiveauDiametre.createMany({
+          data: selectedMms.map((mm) => ({
+            niveauId,
+            diametreId: diametreIdByMm.get(mm)!,
+          })),
+        });
+      }
+
+      const updated = await tx.ferNiveau.findFirst({
+        where: {
+          id: niveauId,
+          rapportId: projectId,
+          rapport: { subscriptionId: auth.subscriptionId },
         },
         include: niveauDetailInclude,
       });
+
+      if (!updated) throw new Error("NIVEAU_NOT_FOUND");
+      return updated;
     });
 
     return res.json({ item: mapProjectNiveau(item) });
@@ -599,9 +625,9 @@ async function updateProjectNiveauData(req: AuthedRequest, res: Response) {
 ferraillageRouter.put("/projects/:projectId/niveaux/:niveauId", updateProjectNiveauData);
 ferraillageRouter.put("/rapports/:rapportId/niveaux/:niveauId", updateProjectNiveauData);
 
-async function getProjectOrThrow(tx: Prisma.TransactionClient, projectId: string) {
-  const project = await tx.ferRapport.findUnique({
-    where: { id: projectId },
+async function getProjectOrThrow(tx: Prisma.TransactionClient, projectId: string, subscriptionId: string) {
+  const project = await tx.ferRapport.findFirst({
+    where: { id: projectId, subscriptionId },
     select: { id: true },
   });
 
@@ -609,11 +635,17 @@ async function getProjectOrThrow(tx: Prisma.TransactionClient, projectId: string
   return project;
 }
 
-async function getScopedProjectNiveau(tx: Prisma.TransactionClient, niveauId: string, projectId: string) {
+async function getScopedProjectNiveau(
+  tx: Prisma.TransactionClient,
+  niveauId: string,
+  projectId: string,
+  subscriptionId: string,
+) {
   const niveau = await tx.ferNiveau.findFirst({
     where: {
       id: niveauId,
       rapportId: projectId,
+      rapport: { subscriptionId },
     },
     select: { id: true },
   });
@@ -633,9 +665,15 @@ async function deleteProjectNiveauData(req: AuthedRequest, res: Response) {
 
   try {
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      await getProjectOrThrow(tx, projectId);
-      await getScopedProjectNiveau(tx, niveauId, projectId);
-      await tx.ferNiveau.delete({ where: { id: niveauId } });
+      await getProjectOrThrow(tx, projectId, auth.subscriptionId);
+      await getScopedProjectNiveau(tx, niveauId, projectId, auth.subscriptionId);
+      await tx.ferNiveau.deleteMany({
+        where: {
+          id: niveauId,
+          rapportId: projectId,
+          rapport: { subscriptionId: auth.subscriptionId },
+        },
+      });
     });
 
     return res.json({ ok: true });
@@ -676,8 +714,8 @@ async function updateProjectData(req: AuthedRequest, res: Response) {
 
   try {
     const item = await prisma.$transaction(async (tx) => {
-      const project = await tx.ferRapport.findUnique({
-        where: { id: projectId },
+      const project = await tx.ferRapport.findFirst({
+        where: { id: projectId, subscriptionId: auth.subscriptionId },
         select: { id: true },
       });
 
@@ -685,6 +723,7 @@ async function updateProjectData(req: AuthedRequest, res: Response) {
 
       const existing = await tx.ferRapport.findFirst({
         where: {
+          subscriptionId: auth.subscriptionId,
           chantierName,
           responsable,
           NOT: { id: projectId },
@@ -694,16 +733,23 @@ async function updateProjectData(req: AuthedRequest, res: Response) {
 
       if (existing) throw new Error("PROJECT_ALREADY_EXISTS");
 
-      return tx.ferRapport.update({
-        where: { id: projectId },
+      await tx.ferRapport.updateMany({
+        where: { id: projectId, subscriptionId: auth.subscriptionId },
         data: {
           chantierName,
           responsable,
           acierType,
           note,
         },
+      });
+
+      const updated = await tx.ferRapport.findFirst({
+        where: { id: projectId, subscriptionId: auth.subscriptionId },
         include: rapportDetailInclude,
       });
+
+      if (!updated) throw new Error("PROJECT_NOT_FOUND");
+      return updated;
     });
 
     return res.json({ item: mapRapportDetail(item) });
@@ -750,6 +796,7 @@ async function createProjectLigne(req: AuthedRequest, res: Response) {
         where: {
           id: niveauId,
           rapportId: projectId,
+          rapport: { subscriptionId: auth.subscriptionId },
         },
         select: { id: true, rapportId: true },
       });
@@ -783,12 +830,19 @@ async function createProjectLigne(req: AuthedRequest, res: Response) {
   }
 }
 
-async function getScopedProjectLigne(tx: Prisma.TransactionClient, ligneId: string, projectId: string, niveauId: string) {
+async function getScopedProjectLigne(
+  tx: Prisma.TransactionClient,
+  ligneId: string,
+  projectId: string,
+  niveauId: string,
+  subscriptionId: string,
+) {
   const ligne = await tx.ferLigne.findFirst({
     where: {
       id: ligneId,
       rapportId: projectId,
       niveauId,
+      rapport: { subscriptionId },
     },
   });
 
@@ -808,10 +862,15 @@ ferraillageRouter.put("/lignes/:ligneId", async (req: AuthedRequest, res: Respon
 
   try {
     const item = await prisma.$transaction(async (tx) => {
-      await getScopedProjectLigne(tx, ligneId, parsed.data.projectId, parsed.data.niveauId);
+      await getScopedProjectLigne(tx, ligneId, parsed.data.projectId, parsed.data.niveauId, auth.subscriptionId);
 
-      return tx.ferLigne.update({
-        where: { id: ligneId },
+      await tx.ferLigne.updateMany({
+        where: {
+          id: ligneId,
+          rapportId: parsed.data.projectId,
+          niveauId: parsed.data.niveauId,
+          rapport: { subscriptionId: auth.subscriptionId },
+        },
         data: {
           designation: parsed.data.designation,
           nomenclature: optionalString(parsed.data.nomenclature),
@@ -824,6 +883,18 @@ ferraillageRouter.put("/lignes/:ligneId", async (req: AuthedRequest, res: Respon
           poidsByMmJson: JSON.stringify(parsed.data.poidsByMm ?? {}),
         },
       });
+
+      const updated = await tx.ferLigne.findFirst({
+        where: {
+          id: ligneId,
+          rapportId: parsed.data.projectId,
+          niveauId: parsed.data.niveauId,
+          rapport: { subscriptionId: auth.subscriptionId },
+        },
+      });
+
+      if (!updated) throw new Error("LIGNE_NOT_FOUND");
+      return updated;
     });
 
     return res.json({ item: mapProjectLigne(item) });
@@ -848,7 +919,13 @@ ferraillageRouter.post("/lignes/:ligneId/duplicate", async (req: AuthedRequest, 
 
   try {
     const item = await prisma.$transaction(async (tx) => {
-      const source = await getScopedProjectLigne(tx, ligneId, parsed.data.projectId, parsed.data.niveauId);
+      const source = await getScopedProjectLigne(
+        tx,
+        ligneId,
+        parsed.data.projectId,
+        parsed.data.niveauId,
+        auth.subscriptionId,
+      );
 
       return tx.ferLigne.create({
         data: {
@@ -889,8 +966,15 @@ ferraillageRouter.delete("/lignes/:ligneId", async (req: AuthedRequest, res: Res
 
   try {
     await prisma.$transaction(async (tx) => {
-      await getScopedProjectLigne(tx, ligneId, parsed.data.projectId, parsed.data.niveauId);
-      await tx.ferLigne.delete({ where: { id: ligneId } });
+      await getScopedProjectLigne(tx, ligneId, parsed.data.projectId, parsed.data.niveauId, auth.subscriptionId);
+      await tx.ferLigne.deleteMany({
+        where: {
+          id: ligneId,
+          rapportId: parsed.data.projectId,
+          niveauId: parsed.data.niveauId,
+          rapport: { subscriptionId: auth.subscriptionId },
+        },
+      });
     });
 
     return res.json({ ok: true });
@@ -919,13 +1003,14 @@ ferraillageRouter.post("/rapports", async (req: AuthedRequest, res: Response) =>
 
   const item = await prisma.ferRapport.upsert({
     where: {
-      chantierName_responsable: {
+      subscriptionId_chantierName_responsable: {
+        subscriptionId: auth.subscriptionId,
         chantierName,
         responsable,
       },
     },
     update: {},
-    create: { chantierName, responsable },
+    create: { subscriptionId: auth.subscriptionId, chantierName, responsable },
     select: rapportSummarySelect,
   });
 
@@ -943,7 +1028,11 @@ ferraillageRouter.delete("/rapports/:rapportId", async (req: AuthedRequest, res:
   const rapportId = String(req.params.rapportId || "").trim();
   if (!rapportId) return res.status(400).json({ error: "Invalid rapportId" });
 
-  await prisma.ferRapport.delete({ where: { id: rapportId } });
+  const deleted = await prisma.ferRapport.deleteMany({
+    where: { id: rapportId, subscriptionId: auth.subscriptionId },
+  });
+
+  if (deleted.count === 0) return res.status(404).json({ error: "Not found" });
   res.json({ ok: true });
 });
 

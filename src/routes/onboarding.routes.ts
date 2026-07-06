@@ -51,14 +51,26 @@ onboardingRouter.post("/plan", async (req, res) => {
 
   const u = await prisma.user.findUnique({
     where: { id: userId },
-    select: { subscriptionId: true },
+    select: { email: true, name: true, role: true, subscriptionId: true },
   });
+
+  if (!u) return res.status(404).json({ error: "User not found" });
+  if (u.role !== "OWNER") {
+    return res.status(403).json({ error: "Owner permission required", code: "OWNER_REQUIRED" });
+  }
 
   const subscriptionId = u?.subscriptionId ?? null;
 
   if (!subscriptionId) {
     const sub = await prisma.subscription.create({
-      data: { status: "ACTIVE", plan, billingCycle, seats, currentPeriodEnd },
+      data: {
+        status: "ACTIVE",
+        plan,
+        billingCycle,
+        seats,
+        currentPeriodEnd,
+        accountName: u.name?.trim() || u.email,
+      },
       select: { id: true },
     });
 
@@ -68,6 +80,16 @@ onboardingRouter.post("/plan", async (req, res) => {
     });
 
     return res.json({ ok: true });
+  }
+
+  if (plan === "INDIVIDUAL") {
+    const userCount = await prisma.user.count({ where: { subscriptionId } });
+    if (userCount > 1) {
+      return res.status(400).json({
+        error: "Cannot switch to individual while company users exist",
+        code: "COMPANY_USERS_EXIST",
+      });
+    }
   }
 
   await prisma.subscription.update({

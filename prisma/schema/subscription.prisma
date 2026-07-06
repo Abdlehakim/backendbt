@@ -22,10 +22,12 @@ model Subscription {
   billingCycle     BillingCycle?
   seats            Int                @default(1)
   currentPeriodEnd DateTime?
+  accountName      String?
 
   users      User[]
   modules    SubscriptionModule[]
   subModules SubscriptionSubModule[] // keep only if you created this model
+  ferRapports FerRapport[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
