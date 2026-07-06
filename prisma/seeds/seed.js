@@ -7,20 +7,105 @@ const bcrypt = require("bcryptjs");
 const adapter = new PrismaMariaDb(process.env.DATABASE_URL);
 const prisma = new PrismaClient({ adapter });
 
-async function upsertUserWithSubscription(email, plainPassword) {
+function normalizeCountryCode(value) {
+  const digits = String(value || "").replace(/[^\d]/g, "");
+  return digits ? `+${digits}` : "";
+}
+
+function normalizePhone(countryCode, phone) {
+  const cc = normalizeCountryCode(countryCode);
+  const local = String(phone || "").replace(/[^\d]/g, "");
+
+  if (!cc || !local) return "";
+
+  return `${cc}${local}`;
+}
+
+function activeEnterpriseSubscriptionData(accountName) {
+  return {
+    status: "ACTIVE",
+    plan: "ENTERPRISE",
+    billingCycle: "MONTHLY",
+    seats: 5,
+    accountName,
+    currentPeriodEnd: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
+  };
+}
+
+async function upsertUserWithSubscription({
+  email,
+  plainPassword,
+  name,
+  countryCode,
+  phone,
+  accountName,
+}) {
   const normalizedEmail = String(email).trim().toLowerCase();
+  const normalizedCountryCode = normalizeCountryCode(countryCode);
+  const normalizedPhone = normalizePhone(normalizedCountryCode, phone);
   const passwordHash = await bcrypt.hash(String(plainPassword), 12);
 
-  return prisma.user.upsert({
+  if (!normalizedCountryCode || !normalizedPhone) {
+    throw new Error(`Invalid phone for seed user ${normalizedEmail}`);
+  }
+
+  const user = await prisma.user.upsert({
     where: { email: normalizedEmail },
-    update: { passwordHash },
+    update: {
+      email: normalizedEmail,
+      passwordHash,
+      name,
+      countryCode: normalizedCountryCode,
+      phone: normalizedPhone,
+      role: "OWNER",
+    },
     create: {
       email: normalizedEmail,
       passwordHash,
-      subscription: { create: { status: "INACTIVE" } },
+      name,
+      countryCode: normalizedCountryCode,
+      phone: normalizedPhone,
+      role: "OWNER",
+      subscription: {
+        create: activeEnterpriseSubscriptionData(accountName),
+      },
     },
-    select: { id: true, email: true, subscription: { select: { id: true } } },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      countryCode: true,
+      phone: true,
+      subscriptionId: true,
+      subscription: { select: { id: true } },
+    },
   });
+
+  let subscriptionId = user.subscription?.id || user.subscriptionId;
+
+  if (!subscriptionId) {
+    const subscription = await prisma.subscription.create({
+      data: activeEnterpriseSubscriptionData(accountName),
+      select: { id: true },
+    });
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { subscriptionId: subscription.id },
+    });
+
+    subscriptionId = subscription.id;
+  } else {
+    await prisma.subscription.update({
+      where: { id: subscriptionId },
+      data: activeEnterpriseSubscriptionData(accountName),
+    });
+  }
+
+  return {
+    ...user,
+    subscription: { id: subscriptionId },
+  };
 }
 
 async function ensureCalculateurAndFerraillage() {
@@ -84,8 +169,23 @@ async function enableForSubscription(subscriptionId, moduleId, subModuleId) {
 }
 
 async function main() {
-  const admin = await upsertUserWithSubscription("admin@smartwebify.com", "Admin123!");
-  const ahmed = await upsertUserWithSubscription("ahmed@smartwebify.com", "Ahmed123!");
+  const admin = await upsertUserWithSubscription({
+    email: "admin@smartwebify.com",
+    plainPassword: "Admin123!",
+    name: "Admin SmartWebify",
+    countryCode: "+216",
+    phone: "98257594",
+    accountName: "SmartWebify Admin",
+  });
+
+  const ahmed = await upsertUserWithSubscription({
+    email: "ahmed@smartwebify.com",
+    plainPassword: "Ahmed123!",
+    name: "Ahmed SmartWebify",
+    countryCode: "+216",
+    phone: "92263400",
+    accountName: "SmartWebify Ahmed",
+  });
 
   const { calculateur, ferraillage } = await ensureCalculateurAndFerraillage();
 
@@ -93,8 +193,8 @@ async function main() {
   await enableForSubscription(ahmed.subscription.id, calculateur.id, ferraillage.id);
 
   console.log("✅ Seed OK:");
-  console.log(` - ${admin.email} / Admin123!`);
-  console.log(` - ${ahmed.email} / Ahmed123!`);
+  console.log(` - ${admin.email} / +216 98257594 / Admin123!`);
+  console.log(` - ${ahmed.email} / +216 92263400 / Ahmed123!`);
   console.log(` - Module: ${calculateur.name}`);
   console.log(` - SubModule: ${ferraillage.name}`);
 }

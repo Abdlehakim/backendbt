@@ -19,5 +19,5 @@ RUN ./node_modules/.bin/prisma generate --schema prisma/schema
 
 RUN npm run build
 
-EXPOSE 4000
+EXPOSE 5000
 CMD ["node", "dist/server.js"]
