@@ -8,9 +8,10 @@ model User {
   email        String   @unique
   passwordHash String
 
-  name  String?
-  phone String?
-  role  UserRole @default(OWNER)
+  name        String?
+  countryCode String?
+  phone       String?  @unique
+  role        UserRole @default(OWNER)
 
   subscriptionId String?
   subscription   Subscription? @relation(fields: [subscriptionId], references: [id])

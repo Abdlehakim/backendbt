@@ -7,18 +7,34 @@ import { prisma } from "@/db";
 export const authRouter = Router();
 
 const loginSchema = z.object({
-  email: z.string().email().max(190),
+  countryCode: z.string().trim().min(1).max(10),
+  phone: z.string().trim().min(3).max(40),
   password: z.string().min(8).max(100),
 });
 
 const signupSchema = z.object({
   name: z.string().trim().min(1).max(120).optional().or(z.literal("")),
-  phone: z.string().trim().max(40).optional().or(z.literal("")),
+  countryCode: z.string().trim().min(1).max(10),
+  phone: z.string().trim().min(3).max(40),
   email: z.string().email().max(190),
   password: z.string().min(8).max(100),
   accountType: z.enum(["INDIVIDUAL", "ENTERPRISE"]).default("INDIVIDUAL"),
   companyName: z.string().trim().max(190).optional().or(z.literal("")),
 });
+
+function normalizeCountryCode(value: string) {
+  const digits = String(value || "").replace(/[^\d]/g, "");
+  return digits ? `+${digits}` : "";
+}
+
+function normalizePhone(countryCode: string, phone: string) {
+  const cc = normalizeCountryCode(countryCode);
+  const local = String(phone || "").replace(/[^\d]/g, "");
+
+  if (!cc || !local) return "";
+
+  return `${cc}${local}`;
+}
 
 const JWT_SECRET = process.env.JWT_ACCESS_SECRET;
 if (!JWT_SECRET) throw new Error("JWT_ACCESS_SECRET is missing in .env");
@@ -78,9 +94,10 @@ authRouter.post("/signup", async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
 
   const email = parsed.data.email.trim().toLowerCase();
+  const countryCode = normalizeCountryCode(parsed.data.countryCode);
+  const phone = normalizePhone(countryCode, parsed.data.phone);
   const password = parsed.data.password;
   const name = parsed.data.name?.trim() || null;
-  const phone = parsed.data.phone?.trim() || null;
   const accountType = parsed.data.accountType;
   const seats = accountType === "INDIVIDUAL" ? 1 : 5;
   const accountName =
@@ -88,8 +105,15 @@ authRouter.post("/signup", async (req, res) => {
       ? (parsed.data.companyName?.trim() || parsed.data.name?.trim() || email)
       : (parsed.data.name?.trim() || email);
 
-  const exists = await prisma.user.findUnique({ where: { email } });
-  if (exists) return res.status(409).json({ error: "Email already used" });
+  if (!countryCode || !phone) {
+    return res.status(400).json({ error: "Invalid phone number" });
+  }
+
+  const existsByEmail = await prisma.user.findUnique({ where: { email } });
+  if (existsByEmail) return res.status(409).json({ error: "Email already used" });
+
+  const existsByPhone = await prisma.user.findUnique({ where: { phone } });
+  if (existsByPhone) return res.status(409).json({ error: "Phone already used" });
 
   const passwordHash = await bcrypt.hash(password, 12);
 
@@ -98,6 +122,7 @@ authRouter.post("/signup", async (req, res) => {
       email,
       passwordHash,
       name,
+      countryCode,
       phone,
       role: "OWNER",
       subscription: {
@@ -109,7 +134,7 @@ authRouter.post("/signup", async (req, res) => {
         },
       },
     },
-    select: { id: true, email: true, name: true, phone: true, role: true },
+    select: { id: true, email: true, name: true, countryCode: true, phone: true, role: true },
   });
 
   const token = jwt.sign({}, JWT_SECRET, { subject: user.id, expiresIn: JWT_EXPIRES_IN });
@@ -122,10 +147,15 @@ authRouter.post("/login", async (req, res) => {
   const parsed = loginSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid input" });
 
-  const email = parsed.data.email.trim().toLowerCase();
+  const countryCode = normalizeCountryCode(parsed.data.countryCode);
+  const phone = normalizePhone(countryCode, parsed.data.phone);
   const password = parsed.data.password;
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  if (!countryCode || !phone) {
+    return res.status(400).json({ error: "Invalid phone number" });
+  }
+
+  const user = await prisma.user.findUnique({ where: { phone } });
   if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
   const ok = await bcrypt.compare(password, user.passwordHash);

@@ -36,6 +36,7 @@ meRouter.get("/", async (req, res) => {
       id: true,
       email: true,
       name: true,
+      countryCode: true,
       phone: true,
       role: true,
       subscription: {
@@ -94,6 +95,7 @@ meRouter.get("/", async (req, res) => {
       id: user.id,
       email: user.email,
       name: user.name,
+      countryCode: user.countryCode,
       phone: user.phone,
       role: user.role,
     },

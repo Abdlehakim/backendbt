@@ -27,10 +27,25 @@ function requireCompanyOwner(req: Request, res: Response) {
 
 const createUserSchema = z.object({
   name: z.string().trim().max(120).optional().or(z.literal("")),
-  phone: z.string().trim().max(40).optional().or(z.literal("")),
+  countryCode: z.string().trim().min(1).max(10),
+  phone: z.string().trim().min(3).max(40),
   email: z.string().email().max(190),
   password: z.string().min(8).max(100),
 });
+
+function normalizeCountryCode(value: string) {
+  const digits = String(value || "").replace(/[^\d]/g, "");
+  return digits ? `+${digits}` : "";
+}
+
+function normalizePhone(countryCode: string, phone: string) {
+  const cc = normalizeCountryCode(countryCode);
+  const local = String(phone || "").replace(/[^\d]/g, "");
+
+  if (!cc || !local) return "";
+
+  return `${cc}${local}`;
+}
 
 usersRouter.get("/", async (req, res) => {
   const auth = requireCompanyOwner(req, res);
@@ -42,6 +57,7 @@ usersRouter.get("/", async (req, res) => {
       id: true,
       email: true,
       name: true,
+      countryCode: true,
       phone: true,
       role: true,
       createdAt: true,
@@ -61,15 +77,21 @@ usersRouter.post("/", async (req, res) => {
 
   const email = parsed.data.email.trim().toLowerCase();
   const name = parsed.data.name?.trim() || null;
-  const phone = parsed.data.phone?.trim() || null;
+  const countryCode = normalizeCountryCode(parsed.data.countryCode);
+  const phone = normalizePhone(countryCode, parsed.data.phone);
 
-  const [currentUserCount, subscription, existingUser] = await Promise.all([
+  if (!countryCode || !phone) {
+    return res.status(400).json({ error: "Invalid phone number" });
+  }
+
+  const [currentUserCount, subscription, existingUserByEmail, existingUserByPhone] = await Promise.all([
     prisma.user.count({ where: { subscriptionId: auth.subscriptionId } }),
     prisma.subscription.findUnique({
       where: { id: auth.subscriptionId },
       select: { seats: true },
     }),
     prisma.user.findUnique({ where: { email }, select: { id: true } }),
+    prisma.user.findUnique({ where: { phone }, select: { id: true } }),
   ]);
 
   if (!subscription) {
@@ -80,7 +102,8 @@ usersRouter.post("/", async (req, res) => {
     return res.status(403).json({ error: "Seat limit reached", code: "SEAT_LIMIT_REACHED" });
   }
 
-  if (existingUser) return res.status(409).json({ error: "Email already used" });
+  if (existingUserByEmail) return res.status(409).json({ error: "Email already used" });
+  if (existingUserByPhone) return res.status(409).json({ error: "Phone already used" });
 
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
 
@@ -89,6 +112,7 @@ usersRouter.post("/", async (req, res) => {
       email,
       passwordHash,
       name,
+      countryCode,
       phone,
       role: "MEMBER",
       subscriptionId: auth.subscriptionId,
@@ -97,6 +121,7 @@ usersRouter.post("/", async (req, res) => {
       id: true,
       email: true,
       name: true,
+      countryCode: true,
       phone: true,
       role: true,
       createdAt: true,
