@@ -84,9 +84,6 @@ modulesRouter.post("/select", async (req, res) => {
   if (moduleKeys.length === 0) {
     return res.status(400).json({ error: "Modules selection required", code: "MODULES_REQUIRED" });
   }
-  if (subModuleKeys.length === 0) {
-    return res.status(400).json({ error: "SubModules selection required", code: "SUBMODULES_REQUIRED" });
-  }
 
   const activeModules = await prisma.module.findMany({
     where: { isActive: true, key: { in: moduleKeys } },
@@ -103,13 +100,22 @@ modulesRouter.post("/select", async (req, res) => {
   }
 
   const moduleIdByKey = new Map(activeModules.map((m) => [m.key, m.id]));
+  const selectedSubModuleKeySet = new Set(subModuleKeys);
 
-  const activeSubModules = await prisma.subModule.findMany({
-    where: { isActive: true, key: { in: subModuleKeys } },
-    select: { id: true, key: true, module: { select: { key: true, isActive: true } } },
+  const activeSubModulesForSelectedModules = await prisma.subModule.findMany({
+    where: {
+      isActive: true,
+      moduleId: { in: activeModules.map((m) => m.id) },
+    },
+    select: {
+      id: true,
+      key: true,
+      moduleId: true,
+      module: { select: { key: true, isActive: true } },
+    },
   });
 
-  const activeSubKeySet = new Set(activeSubModules.map((s) => s.key));
+  const activeSubKeySet = new Set(activeSubModulesForSelectedModules.map((s) => s.key));
   const invalidSubModules = subModuleKeys.filter((k) => !activeSubKeySet.has(k));
   if (invalidSubModules.length > 0) {
     return res.status(400).json({
@@ -118,21 +124,32 @@ modulesRouter.post("/select", async (req, res) => {
     });
   }
 
-  const badPairs: SubModuleKey[] = [];
-  for (const s of activeSubModules) {
-    const parentKey = s.module?.key;
-    const parentActive = s.module?.isActive !== false;
-    if (!parentKey || !parentActive || !activeModuleKeySet.has(parentKey)) {
-      badPairs.push(s.key);
+  const moduleIdsWithActiveSubModules = new Set<string>();
+  const selectedSubModuleModuleIds = new Set<string>();
+
+  for (const s of activeSubModulesForSelectedModules) {
+    moduleIdsWithActiveSubModules.add(s.moduleId);
+
+    if (selectedSubModuleKeySet.has(s.key)) {
+      selectedSubModuleModuleIds.add(s.moduleId);
     }
   }
 
-  if (badPairs.length > 0) {
+  const missingModuleKeys = activeModules
+    .filter((m) => moduleIdsWithActiveSubModules.has(m.id))
+    .filter((m) => !selectedSubModuleModuleIds.has(m.id))
+    .map((m) => m.key);
+
+  if (missingModuleKeys.length > 0) {
     return res.status(400).json({
-      error: `SubModules must belong to selected modules: ${badPairs.join(", ")}`,
-      code: "SUBMODULE_PARENT_NOT_SELECTED",
+      error: `SubModules selection required for: ${missingModuleKeys.join(", ")}`,
+      code: "SUBMODULES_REQUIRED",
     });
   }
+
+  const selectedActiveSubModules = activeSubModulesForSelectedModules.filter((s) =>
+    selectedSubModuleKeySet.has(s.key),
+  );
 
   await prisma.$transaction(async (tx) => {
     await tx.subscriptionSubModule.deleteMany({ where: { subscriptionId } });
@@ -146,13 +163,15 @@ modulesRouter.post("/select", async (req, res) => {
       skipDuplicates: true,
     });
 
-    await tx.subscriptionSubModule.createMany({
-      data: activeSubModules.map((s) => ({
-        subscriptionId,
-        subModuleId: s.id,
-      })),
-      skipDuplicates: true,
-    });
+    if (selectedActiveSubModules.length > 0) {
+      await tx.subscriptionSubModule.createMany({
+        data: selectedActiveSubModules.map((s) => ({
+          subscriptionId,
+          subModuleId: s.id,
+        })),
+        skipDuplicates: true,
+      });
+    }
   });
 
   return res.json({ ok: true });
